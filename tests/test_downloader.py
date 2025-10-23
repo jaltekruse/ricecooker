@@ -1,7 +1,9 @@
 import os
 import unittest
+import random
 
 from ricecooker.utils import downloader
+from ricecooker.utils.downloader import read
 
 
 class TestArchiver(unittest.TestCase):
@@ -70,3 +72,10 @@ class TestArchiver(unittest.TestCase):
             link_filename, page_filename
         )
         assert rel_path == "../kolibri_1.2.3.png"
+
+    def test_pretextbook_css_fetch(self):
+        sushi_url = 'https://activecalculus.org/single2e/frontmatter.html'
+        archive = downloader.ArchiveDownloader("downloads/active_calc_2e_again_" + str(random.randint(1, 1000000)))
+        archive.get_page(sushi_url)
+        # fails with     AttributeError: module 'selenium.webdriver' has no attribute 'PhantomJS'
+        #read(sushi_url, loadjs=True)

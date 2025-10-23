@@ -350,6 +350,7 @@ def download_static_assets(  # noqa: C901
         for i, node in enumerate(nodes):
 
             if node_filter:
+                print(node_filter)
                 if not node_filter(node):
                     src = node[attr]
                     node[attr] = ""
@@ -432,8 +433,13 @@ def download_static_assets(  # noqa: C901
         return content
 
     def css_node_filter(node):
-        if "rel" in node:
-            return "stylesheet" in node["rel"]
+        print(node)
+        print(node["rel"])
+        print("rel" in node)
+        if node["rel"]:
+            ret = ("stylesheet" in node["rel"])
+            print(ret)
+            return ret
         return node["href"].split("?")[0].strip().endswith(".css")
 
     def css_content_middleware(content, url, **kwargs):
