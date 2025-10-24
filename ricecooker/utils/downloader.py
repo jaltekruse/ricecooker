@@ -297,6 +297,8 @@ def download_static_assets(  # noqa: C901
     downloaded static files, as a BeautifulSoup object. (Call str() on it to
     extract the raw HTML.)
     """
+    print("base url:" + base_url)
+    print("relative_links:" + str(relative_links))
     # without the ending /, some functions will treat the last path component like a filename, so add it.
     if not base_url.endswith("/"):
         base_url += "/"
@@ -422,6 +424,8 @@ def download_static_assets(  # noqa: C901
                 # that middleware can be run regardless of how we get the content.
                 content = open(fullpath, "r", encoding="utf-8").read()
                 new_content = content_middleware(content, url)
+                print("JASON - RUNNING CONTENT MIDDLEWARE")
+                print(new_content)
                 if new_content != content:
                     # if the middleware changed the content, update it.
                     with open(fullpath, "w") as f:
@@ -443,10 +447,12 @@ def download_static_assets(  # noqa: C901
         return node["href"].split("?")[0].strip().endswith(".css")
 
     def css_content_middleware(content, url, **kwargs):
+        print("run downloader.css_content_middleware")
         if css_middleware:
             content = css_middleware(content, url, **kwargs)
 
         root_parts = urlparse(url)
+        print("root_parts: " + str(root_parts))
 
         # Download linked fonts and images
         def repl(match):
@@ -481,7 +487,11 @@ def download_static_assets(  # noqa: C901
 
             new_url = src
             if url and parts.path.startswith("/") or relative_links:
+                print("starts with slash /")
+                print("url - " + url)
+                print("derived_filename - " + derived_filename)
                 page_filename = derive_filename(url)
+                print("page_filename - " + page_filename)
                 new_url = get_relative_url_for_archive_filename(
                     derived_filename, page_filename
                 )
@@ -490,7 +500,15 @@ def download_static_assets(  # noqa: C901
                 # rewritten. When using get_archive_filename, relative URLs will still work.
                 new_url = derived_filename
 
+            print("src_url", src_url)
+            print("derived_filename", derived_filename)
+            print("new_url", new_url)
+
             fullpath = os.path.join(destination, derived_filename)
+            print("Jason: about to download file:" + src_url)
+            print("To destination - " + destination)
+            print("derived_filename - " + derived_filename)
+            print("request_fn - " + str(request_fn))
             if not os.path.exists(fullpath):
                 download_file(
                     src_url,

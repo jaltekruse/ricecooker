@@ -253,6 +253,10 @@ def download_file(  # noqa: C901
 
     # calculate the final destination for the file, and write the content out to there
     dest = os.path.join(fulldestpath, filename)
+    print("FULL DEST PATH in html.py download_file")
+    print(dest)
+    if ("index.css" in dest):
+        print(content)
     with open(dest, "wb") as f:
         f.write(content)
 
