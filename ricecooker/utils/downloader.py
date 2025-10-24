@@ -681,7 +681,7 @@ def get_archive_filename(url, page_url=None, download_root=None, resource_urls=N
         "local_path = {}, local_dir_name = {}".format(local_path, local_dir_name)
     )
 
-    if local_dir_name != local_path and resource_urls is not None:
+    if resource_urls is not None:
         full_dir = os.path.join(download_root, local_dir_name)
         os.makedirs(full_dir, exist_ok=True)
 
