@@ -810,6 +810,9 @@ def archive_page(
             relative_links=relative_links,
         )
 
+        # TODO Jason - very hack just trying to get pretext working
+        new_content = new_content.replace("\"_static", "./localhost:8080\"_static")
+
         os.makedirs(index_dir, exist_ok=True)
 
         soup = BeautifulSoup(new_content, features="lxml")
