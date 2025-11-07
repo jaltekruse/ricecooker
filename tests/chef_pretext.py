@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 import tempfile
 
+import shutil
 import requests
 from bs4 import BeautifulSoup
 
@@ -14,6 +15,7 @@ from ricecooker.config import LOGGER
 from ricecooker.utils.caching import CacheControlAdapter
 from ricecooker.utils.caching import CacheForeverHeuristic
 from ricecooker.utils.caching import FileCache
+from ricecooker.utils.downloader import archive_page
 from ricecooker.utils.html import download_file
 from ricecooker.utils import downloader
 
@@ -237,9 +239,13 @@ def download_wikipedia_page(url, thumbnail, title):
 
     # downlod the main wikipedia page, apply a middleware processor, and call it index.html
 
-    archive = downloader.ArchiveDownloader(destpath)
-    archive.get_page(url)
-    
+    #archive = downloader.ArchiveDownloader(destpath)
+    #archive.get_page(url)
+
+    #download_file(url, destpath)
+
+    archive_page(url, destpath)
+
     # localref, _ = get_page(
     #     url,
     #     destpath,
@@ -248,12 +254,16 @@ def download_wikipedia_page(url, thumbnail, title):
     #     request_fn=make_request,
     # )
 
+    mathjax_dest = destpath + "/cdn.jsdelivr.net/npm/mathjax@3/"
+    shutil.rmtree(mathjax_dest + "es5")
+    shutil.copytree("/home/jason/src/MathJax/es5", mathjax_dest + "/es5")
+
     # turn the temp folder into a zip file
     zippath = create_predictable_zip(destpath)
 
     # create an HTML5 app node
     html5app = HTML5AppNode(
-        files=[HTMLZipFile(zippath)],
+        files=[HTMLZipFile(zippath, filename=zippath)],
         title=title,
         thumbnail=thumbnail,
         source_id=url.split("/")[-1],

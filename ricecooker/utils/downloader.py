@@ -411,6 +411,7 @@ def download_static_assets(  # noqa: C901
             if relative_links and base_url:
                 base_filename = get_archive_filename(base_url)
                 new_url = get_relative_url_for_archive_filename(filename, base_filename)
+            new_url = "./" + new_url
             node[attr] = new_url
 
             fullpath = os.path.join(destination, filename)
@@ -753,7 +754,7 @@ def archive_page(
         content = response.text
 
     # url may be redirected, for relative link handling we want the final URL that was loaded.
-    url = props["url"]
+    #url = props["url"]
 
     # get related assets
     parts = urlparse(url)
@@ -793,6 +794,8 @@ def archive_page(
                 index_path = download_path + "index.html"
             else:
                 index_path = download_path + ".html"
+
+        index_path = download_root + "/index.html"
 
         index_dir = os.path.dirname(index_path)
 
