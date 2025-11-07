@@ -4,6 +4,8 @@ import string
 
 from le_utils.constants import licenses
 
+from ricecooker.utils.zip import create_predictable_zip
+
 from ricecooker.chefs import SushiChef
 from ricecooker.classes.files import AudioFile
 from ricecooker.classes.files import DocumentFile

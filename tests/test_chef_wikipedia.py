@@ -47,6 +47,8 @@ def make_fully_qualified_url(url):
 
 def make_request(url, *args, **kwargs):
     response = sess.get(url, *args, **kwargs)
+    print(response.status_code)
+    print(response.text)
     if response.status_code != 200:
         LOGGER.warning("URL NOT FOUND: " + url)
     elif not response.from_cache:
