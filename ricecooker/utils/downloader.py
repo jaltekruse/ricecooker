@@ -811,7 +811,8 @@ def archive_page(
         )
 
         # TODO Jason - very hack just trying to get pretext working
-        new_content = new_content.replace("\"_static", "./localhost:8080\"_static")
+        new_content = new_content.replace("\"_static", "\"./localhost:8080/_static")
+        new_content = new_content.replace("\"./knowl", "\"./localhost:8080/knowl")
 
         os.makedirs(index_dir, exist_ok=True)
 

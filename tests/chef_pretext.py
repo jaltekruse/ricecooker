@@ -2,6 +2,7 @@
 import tempfile
 
 import shutil
+from pathlib import Path
 import requests
 from bs4 import BeautifulSoup
 
@@ -257,6 +258,15 @@ def download_wikipedia_page(url, thumbnail, title):
     mathjax_dest = destpath + "/cdn.jsdelivr.net/npm/mathjax@3/"
     shutil.rmtree(mathjax_dest + "es5")
     shutil.copytree("/home/jason/src/MathJax/es5", mathjax_dest + "/es5")
+
+    source_dir = "/home/jason/src/brown-tbil/linear-algebra/"
+    pretext_dest = destpath + "/localhost:8080/"
+    pretext_asset_dirs = ["external", "generated", "knowl", "_static"]
+    for asset_dir in pretext_asset_dirs:
+        dest_asset_dir = pretext_dest + asset_dir
+        if Path(dest_asset_dir).exists():
+            shutil.rmtree(dest_asset_dir)
+        shutil.copytree(source_dir + asset_dir, pretext_dest + asset_dir)
 
     # turn the temp folder into a zip file
     zippath = create_predictable_zip(destpath)
