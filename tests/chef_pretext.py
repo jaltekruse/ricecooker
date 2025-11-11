@@ -26,7 +26,9 @@ from ricecooker.utils.zip import create_predictable_zip
 # CHANNEL SETTINGS
 SOURCE_DOMAIN = "<yourdomain.org>"  #
 SOURCE_ID = "jason_pretext_test"  # an alphanumeric ID refering to this channel
-CHANNEL_TITLE = "<channeltitle>"  # a humand-readbale title
+CHANNEL_TITLE = "This cannot be imported, TODO debug"  # a humand-readbale title
+#SOURCE_ID = "jason_pretext_test_new_id"  # an alphanumeric ID refering to this channel
+#CHANNEL_TITLE = "Jason PreteXt testing"
 CHANNEL_LANGUAGE = "en"  # language of channel
 DOMAIN = "http://localhost:8080/"
 
