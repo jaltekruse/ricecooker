@@ -24,9 +24,9 @@ from ricecooker.utils.zip import create_predictable_zip
 
 
 # CHANNEL SETTINGS
-SOURCE_DOMAIN = "<yourdomain.org>"  #
-SOURCE_ID = "jason_pretext_test"  # an alphanumeric ID refering to this channel
-CHANNEL_TITLE = "This cannot be imported, TODO debug"  # a humand-readbale title
+SOURCE_DOMAIN = "https://runestone.academy/ns/books/published/FOPP-PIE/ThinkLikeComputer.html"  #
+SOURCE_ID = "thinkcspi_runestone_academy"  # an alphanumeric ID refering to this channel
+CHANNEL_TITLE = "How to Think Like a Computer Scientist, Interactive Edition"  # a humand-readbale title
 #SOURCE_ID = "jason_pretext_test_new_id"  # an alphanumeric ID refering to this channel
 #CHANNEL_TITLE = "Jason PreteXt testing"
 CHANNEL_LANGUAGE = "en"  # language of channel
@@ -55,9 +55,10 @@ def make_fully_qualified_url(url):
 
 def make_request(url, *args, **kwargs):
     response = sess.get(url, *args, **kwargs)
+    print("JASON DEBUG")
     print(response.status_code)
     if response.status_code != 200:
-        print(response.text)
+        #print(response.text)
         LOGGER.warning("URL NOT FOUND: " + url)
     elif not response.from_cache:
         LOGGER.warning("NOT CACHED: " + url)
@@ -86,7 +87,7 @@ class WikipediaChef(SushiChef):
 
         channel = self.get_channel(**kwargs)
         add_subpages_from_pretext_toc(
-            channel, DOMAIN + "frontmatter.html"
+            channel, DOMAIN + "thinkcspy-3.html"
         )
 
         # potato_topic = TopicNode(
@@ -177,7 +178,7 @@ def add_subpages_from_pretext_toc(channel, list_url):
     '''
 
     #print(list(table.children)[0].find_all("li", recursive=False))
-    print(table.find_all("li"))
+    # print(table.find_all("li"))
     # loop through all the rows in the table
     for chapter in list(table.children)[0].find_all("li", recursive=False):
 
@@ -191,7 +192,7 @@ def add_subpages_from_pretext_toc(channel, list_url):
             sub_chapter_topic = TopicNode(source_id=sub_chapter.findNext("a").attrs["href"], title=sub_chap_title)
             chapter_topic.add_child(sub_chapter_topic)
 
-            if "2.1" in sub_chap_title:
+            if "2.2" in sub_chap_title:
                 sub_chap_url = DOMAIN + list(sub_chapter.find_all("a", recursive="False"))[0].attrs["href"]
                 html5app = download_wikipedia_page(sub_chap_url, thumbnail=None, title=title)
                 sub_chapter_topic.add_child(html5app)
@@ -261,14 +262,19 @@ def download_wikipedia_page(url, thumbnail, title):
     shutil.rmtree(mathjax_dest + "es5")
     shutil.copytree("/home/jason/src/MathJax/es5", mathjax_dest + "/es5")
 
-    source_dir = "/home/jason/src/brown-tbil/linear-algebra/"
+    source_dir = "/home/jason/src/thinkcspy/output/web/"
     pretext_dest = destpath + "/localhost:8080/"
     pretext_asset_dirs = ["external", "generated", "knowl", "_static"]
     for asset_dir in pretext_asset_dirs:
         dest_asset_dir = pretext_dest + asset_dir
-        if Path(dest_asset_dir).exists():
-            shutil.rmtree(dest_asset_dir)
-        shutil.copytree(source_dir + asset_dir, pretext_dest + asset_dir)
+
+        # if Path(dest_asset_dir).exists():
+        #     shutil.rmtree(dest_asset_dir)
+
+        # copy over resources, merging with anything already preset, like rewritten files that had query params like
+        # pretext_add_on.js?x=1 rewritten to pretext_add_on_x_1.js
+        # Don't overwrite CSS files as those are traversed to rewrite transitive imports of resources like images/fonts
+        shutil.copytree(source_dir + asset_dir, pretext_dest + asset_dir, dirs_exist_ok=True, ignore=shutil.ignore_patterns('theme.css'))
 
     # turn the temp folder into a zip file
     zippath = create_predictable_zip(destpath)
@@ -284,7 +290,7 @@ def download_wikipedia_page(url, thumbnail, title):
         # ricecooker.exceptions.InvalidNodeException: 2 - Euclidean Vectors (EV) (HTML5AppNode): 1 file: License is not a license object
         # in the debugger I'm confused, __bases__ shows this license object inherits from
         # (<class 'ricecooker.classes.licenses.License'>,), which appears to be the class it is checking for? but isinstance returns false
-        license=licenses.CC_BY_NC_SALicense(copyright_holder="Steven Clontz and Drew Lewis")
+        license=licenses.CC_BY_NC_SALicense(copyright_holder="Brad Miller, Paul Resnick, Lauren Murphy, Jeffrey Elkner, Peter Wentworth, Allen B. Downey, Chris Meyers, and Dario Mitchell.")
     )
 
     return html5app
