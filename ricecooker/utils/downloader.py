@@ -510,6 +510,8 @@ def download_static_assets(  # noqa: C901
                     destination,
                     request_fn=request_fn,
                     filename=derived_filename,
+                    # TODO JASON - Hacky check for CSS
+                    middleware_callbacks= css_content_middleware if (derived_filename.endswith(".css")) else None,
                 )
             else:
                 LOGGER.debug(
