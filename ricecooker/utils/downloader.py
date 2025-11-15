@@ -333,7 +333,7 @@ def download_static_assets(  # noqa: C901
     LOGGER.debug("base_url = {}".format(base_url))
 
     if not isinstance(doc, BeautifulSoup):
-        doc = BeautifulSoup(doc, "lxml")
+        doc = BeautifulSoup(doc, features="lxml", preserve_whitespace_tags=["p", "code", "textarea"])
 
     def download_srcset(selector, attr, content_middleware=None):
         nodes = doc.select(selector)
@@ -842,9 +842,10 @@ def archive_page(
 
         os.makedirs(index_dir, exist_ok=True)
 
-        soup = BeautifulSoup(new_content, features="lxml")
+        soup = BeautifulSoup(new_content, features="lxml", preserve_whitespace_tags=["p", "code", "textarea"])
         f = open(index_path, "wb")
-        f.write(soup.prettify(encoding="utf-8"))
+        soup_str = str(soup)
+        f.write(soup_str.encode("utf-8"))
         f.close()
 
         page_info = {

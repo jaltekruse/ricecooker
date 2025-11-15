@@ -192,7 +192,7 @@ def add_subpages_from_pretext_toc(channel, list_url):
             sub_chapter_topic = TopicNode(source_id=sub_chapter.findNext("a").attrs["href"], title=sub_chap_title)
             chapter_topic.add_child(sub_chapter_topic)
 
-            if "12.2" in sub_chap_title:
+            if "2.2" in sub_chap_title:
                 sub_chap_url = DOMAIN + list(sub_chapter.find_all("a", recursive="False"))[0].attrs["href"]
                 html5app = download_wikipedia_page(sub_chap_url, thumbnail=None, title=title)
                 sub_chapter_topic.add_child(html5app)
