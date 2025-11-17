@@ -189,13 +189,13 @@ def add_subpages_from_pretext_toc(channel, list_url):
         for sub_chapter in list(chapter.find_all("ul", recursive=False))[0].find_all("li", recursive=False):
             sub_chap_number = sub_chapter.findNext("span").text
             sub_chap_title = sub_chap_number + " - " + sub_chapter.findNext("span").findNext("span").text
-            sub_chapter_topic = TopicNode(source_id=sub_chapter.findNext("a").attrs["href"], title=sub_chap_title)
-            chapter_topic.add_child(sub_chapter_topic)
+            #sub_chapter_topic = TopicNode(source_id=sub_chapter.findNext("a").attrs["href"], title=sub_chap_title)
+            # chapter_topic.add_child(sub_chapter_topic)
 
             if "2.2" in sub_chap_title:
                 sub_chap_url = DOMAIN + list(sub_chapter.find_all("a", recursive="False"))[0].attrs["href"]
-                html5app = download_wikipedia_page(sub_chap_url, thumbnail=None, title=title)
-                sub_chapter_topic.add_child(html5app)
+                html5app = download_wikipedia_page(sub_chap_url, thumbnail=None, title=sub_chap_title)
+                chapter_topic.add_child(html5app)
 
                 # add the downloaded HTML5 app node into the topic
 
