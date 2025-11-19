@@ -51,7 +51,7 @@ sess.mount("https://", forever_adapter)
 dep_zip = None
 dep_zip_file = None
 
-cache_invalidator_string = "                                                             "
+cache_invalidator_string = "                                                               "
 
 def make_fully_qualified_url(url):
     if url.startswith("//"):
