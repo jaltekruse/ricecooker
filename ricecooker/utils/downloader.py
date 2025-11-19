@@ -741,6 +741,7 @@ def get_relative_url_for_archive_filename(filename, relative_to):
 def archive_page(
     url,
     download_root,
+    skip_static_asset_download=False,
     link_policy=None,
     run_js=False,
     strict=False,
@@ -799,16 +800,20 @@ def archive_page(
         def get_resource_filename(url, destination):
             return get_archive_filename(url, destination, page_url, download_root, resource_urls)
 
-        doc = download_static_assets(
-            content,
-            download_root,
-            base_url,
-            derive_filename=get_resource_filename,
-            link_policy=link_policy,
-            run_js=run_js,
-            resource_urls=resource_urls,
-            relative_links=relative_links,
-        )
+        if skip_static_asset_download:
+           if not isinstance(content, BeautifulSoup):
+               doc = BeautifulSoup(content, features="lxml", preserve_whitespace_tags=["p", "code", "textarea"])
+        else:
+            doc = download_static_assets(
+                    content,
+                    download_root,
+                    base_url,
+                    derive_filename=get_resource_filename,
+                    link_policy=link_policy,
+                    run_js=run_js,
+                    resource_urls=resource_urls,
+                    relative_links=relative_links,
+                )
 
         download_path = os.path.join(
             download_root, get_archive_filename(url, page_url, download_root)
@@ -836,16 +841,12 @@ def archive_page(
             relative_links=relative_links,
         )
 
-        # TODO Jason - very hack just trying to get pretext working
-        new_content = new_content.replace("\"_static", "\"./localhost:8080/_static")
-        new_content = new_content.replace("\"./knowl", "\"./localhost:8080/knowl")
-
         os.makedirs(index_dir, exist_ok=True)
 
         soup = BeautifulSoup(new_content, features="lxml", preserve_whitespace_tags=["p", "code", "textarea"])
         f = open(index_path, "wb")
         soup_str = str(soup)
-        f.write(soup_str.encode("utf-8"))
+        f.write((soup_str + "                                               ").encode("utf-8"))
         f.close()
 
         page_info = {
