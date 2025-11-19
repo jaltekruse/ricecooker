@@ -9,7 +9,6 @@ import le_utils
 import requests
 from bs4 import BeautifulSoup
 
-import ricecooker
 from ricecooker.chefs import SushiChef
 from ricecooker.classes import licenses
 from ricecooker.classes.files import HTMLZipFile
@@ -52,7 +51,7 @@ sess.mount("https://", forever_adapter)
 dep_zip = None
 dep_zip_file = None
 
-cache_invalidator_string = "                                                   "
+cache_invalidator_string = "                                                             "
 
 def make_fully_qualified_url(url):
     if url.startswith("//"):
@@ -147,6 +146,8 @@ def add_subpages_from_pretext_toc(channel, list_url):
                 html5app = download_book_page(sub_chap_url, thumbnail=None, title=sub_chap_title)
                 chapter_topic.add_child(html5app)
 
+        channel.add_child(chapter_topic)
+
 def download_book_page(url, thumbnail, title):
     destpath = tempfile.mkdtemp()
 
@@ -208,7 +209,7 @@ def download_book_page(url, thumbnail, title):
 
     # create an HTML5 app node
     html5app = HTML5AppNode(
-        files=[HTMLZipFile(zippath, filename=zippath), dep_zip_file],
+        files=[HTMLZipFile(zippath), dep_zip_file],
         title=title,
         thumbnail=thumbnail,
         source_id=url.split("/")[-1],
