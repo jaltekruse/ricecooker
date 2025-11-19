@@ -32,6 +32,9 @@ from le_utils.constants import file_formats, format_presets
 SOURCE_DOMAIN = "https://runestone.academy/ns/books/published/FOPP-PIE/ThinkLikeComputer.html"  #
 SOURCE_ID = "thinkcspi_runestone_academy"  # an alphanumeric ID refering to this channel
 CHANNEL_TITLE = "How to Think Like a Computer Scientist, Interactive Edition"  # a humand-readbale title
+# SOURCE_ID = "thinkcspi_runestone_academy_nov_18"  # an alphanumeric ID refering to this channel
+# CHANNEL_TITLE = "New Name - How to Think Like a Computer Scientist, Interactive Edition"  # a humand-readbale title
+
 #SOURCE_ID = "jason_pretext_test_new_id"  # an alphanumeric ID refering to this channel
 #CHANNEL_TITLE = "Jason PreteXt testing"
 CHANNEL_LANGUAGE = "en"  # language of channel
@@ -49,7 +52,7 @@ sess.mount("https://", forever_adapter)
 dep_zip = None
 dep_zip_file = None
 
-cache_invalidator_string = "                                                "
+cache_invalidator_string = "                                                   "
 
 def make_fully_qualified_url(url):
     if url.startswith("//"):
