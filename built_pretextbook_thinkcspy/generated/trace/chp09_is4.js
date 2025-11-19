@@ -1,0 +1,12 @@
+
+if (allTraceData === undefined) {
+    var allTraceData = {};
+}
+(function() { // IIFE to avoid variable collision
+    let codelensID = "rs-chp09_is4";  //fallback
+    let partnerCodelens = document.currentScript.parentElement.querySelector(".pytutorVisualizer");
+    if (partnerCodelens) {
+        codelensID = partnerCodelens.id;
+    }
+    allTraceData[codelensID] = {"code": "a = [81, 82, 83]\n\nb = a[:]       # make a clone using slice\nprint(a == b)\nprint(a is b)\n\nb[0] = 5\n\nprint(a)\nprint(b)\n", "trace": [{"line": 1, "event": "step_line", "func_name": "<module>", "globals": {}, "ordered_globals": [], "stack_to_render": [], "heap": {}, "stdout": ""}, {"line": 3, "event": "step_line", "func_name": "<module>", "globals": {"a": ["REF", 1]}, "ordered_globals": ["a"], "stack_to_render": [], "heap": {"1": ["LIST", 81, 82, 83]}, "stdout": ""}, {"line": 4, "event": "step_line", "func_name": "<module>", "globals": {"a": ["REF", 1], "b": ["REF", 2]}, "ordered_globals": ["a", "b"], "stack_to_render": [], "heap": {"1": ["LIST", 81, 82, 83], "2": ["LIST", 81, 82, 83]}, "stdout": ""}, {"line": 5, "event": "step_line", "func_name": "<module>", "globals": {"a": ["REF", 1], "b": ["REF", 2]}, "ordered_globals": ["a", "b"], "stack_to_render": [], "heap": {"1": ["LIST", 81, 82, 83], "2": ["LIST", 81, 82, 83]}, "stdout": "True\n"}, {"line": 7, "event": "step_line", "func_name": "<module>", "globals": {"a": ["REF", 1], "b": ["REF", 2]}, "ordered_globals": ["a", "b"], "stack_to_render": [], "heap": {"1": ["LIST", 81, 82, 83], "2": ["LIST", 81, 82, 83]}, "stdout": "True\nFalse\n"}, {"line": 9, "event": "step_line", "func_name": "<module>", "globals": {"a": ["REF", 1], "b": ["REF", 2]}, "ordered_globals": ["a", "b"], "stack_to_render": [], "heap": {"1": ["LIST", 81, 82, 83], "2": ["LIST", 5, 82, 83]}, "stdout": "True\nFalse\n"}, {"line": 10, "event": "step_line", "func_name": "<module>", "globals": {"a": ["REF", 1], "b": ["REF", 2]}, "ordered_globals": ["a", "b"], "stack_to_render": [], "heap": {"1": ["LIST", 81, 82, 83], "2": ["LIST", 5, 82, 83]}, "stdout": "True\nFalse\n[81, 82, 83]\n"}, {"line": 10, "event": "return", "func_name": "<module>", "globals": {"a": ["REF", 1], "b": ["REF", 2]}, "ordered_globals": ["a", "b"], "stack_to_render": [], "heap": {"1": ["LIST", 81, 82, 83], "2": ["LIST", 5, 82, 83]}, "stdout": "True\nFalse\n[81, 82, 83]\n[5, 82, 83]\n"}], "startingInstruction": 0};
+})();
