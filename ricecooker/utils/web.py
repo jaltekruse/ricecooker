@@ -7,6 +7,7 @@ import os
 
 from bs4 import BeautifulSoup
 
+PRESERVE_WHITESPACE_TAGS=["p", "pre", "code", "textarea"]
 
 class HTMLParser:
     """
@@ -34,7 +35,7 @@ class HTMLParser:
         if self.html is None:
             basename = os.path.basename(self.filename)
             self.html = open(self.filename).read()
-        soup = BeautifulSoup(self.html, features="html.parser", preserve_whitespace_tags=["p", "code", "textarea"])
+        soup = BeautifulSoup(self.html, features="html.parser", preserve_whitespace_tags=PRESERVE_WHITESPACE_TAGS)
 
         extracted_links = []
         for tag_name in self.link_tags:
@@ -81,7 +82,7 @@ class HTMLParser:
         """
         if self.html is None:
             self.html = open(self.filename).read()
-        soup = BeautifulSoup(self.html, features="html.parser", preserve_whitespace_tags=["p", "code", "textarea"])
+        soup = BeautifulSoup(self.html, features="html.parser", preserve_whitespace_tags=PRESERVE_WHITESPACE_TAGS)
 
         for tag_name in self.link_tags:
             tags = soup.find_all(tag_name)

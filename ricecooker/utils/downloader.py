@@ -23,6 +23,7 @@ from selenium import webdriver
 from ricecooker.config import LOGGER
 from ricecooker.config import PHANTOMJS_PATH
 from ricecooker.config import STRICT
+from ricecooker.utils import web
 from ricecooker.utils.caching import CacheControlAdapter
 from ricecooker.utils.caching import CacheForeverHeuristic
 from ricecooker.utils.html import download_file
@@ -340,7 +341,7 @@ def download_static_assets(  # noqa: C901
     LOGGER.debug("base_url = {}".format(base_url))
 
     if not isinstance(doc, BeautifulSoup):
-        doc = BeautifulSoup(doc, features="lxml", preserve_whitespace_tags=["p", "code", "textarea"])
+        doc = BeautifulSoup(doc, features="lxml", preserve_whitespace_tags=web.PRESERVE_WHITESPACE_TAGS)
 
     def download_srcset(selector, attr, content_middleware=None):
         nodes = doc.select(selector)
@@ -812,7 +813,7 @@ def archive_page(
         # TODO JASON delete
         if False and skip_static_asset_download:
            if not isinstance(content, BeautifulSoup):
-               doc = BeautifulSoup(content, features="lxml", preserve_whitespace_tags=["p", "code", "textarea"])
+               doc = BeautifulSoup(content, features="lxml", preserve_whitespace_tags=web.PRESERVE_WHITESPACE_TAGS)
         else:
             doc = download_static_assets(
                     content,
@@ -854,7 +855,7 @@ def archive_page(
 
         os.makedirs(index_dir, exist_ok=True)
 
-        soup = BeautifulSoup(new_content, features="lxml", preserve_whitespace_tags=["p", "code", "textarea"])
+        soup = BeautifulSoup(new_content, features="lxml", preserve_whitespace_tags=web.PRESERVE_WHITESPACE_TAGS)
         f = open(index_path, "wb")
         soup_str = str(soup)
         f.write((soup_str + "                                               ").encode("utf-8"))
@@ -976,7 +977,7 @@ class ArchiveDownloader:
         info = self.cache_data[url]
         # lxml enables some nice features like being able to search for individual
         # class names using BeautifulSoup, so let's just require it.
-        soup = BeautifulSoup(open(info["index_path"], "rb"), features="lxml", preserve_whitespace_tags=["p", "code", "textarea"])
+        soup = BeautifulSoup(open(info["index_path"], "rb"), features="lxml", preserve_whitespace_tags=web.PRESERVE_WHITESPACE_TAGS)
         return soup
 
     def create_dependency_zip(self, count_threshold=2):
