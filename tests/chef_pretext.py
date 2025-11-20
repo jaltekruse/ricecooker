@@ -49,9 +49,8 @@ sess.mount("http://", forever_adapter)
 sess.mount("https://", forever_adapter)
 
 dep_zip = None
-dep_zip_file = None
 
-cache_invalidator_string = "                                                               "
+cache_invalidator_string = "                                                                       "
 
 def make_fully_qualified_url(url):
     if url.startswith("//"):
@@ -151,8 +150,8 @@ def add_subpages_from_pretext_toc(channel, list_url):
 def download_book_page(url, thumbnail, title):
     destpath = tempfile.mkdtemp()
 
-    #archive_page(url, destpath, skip_static_asset_download=True)
-    archive_page(url, destpath)
+    archive_page(url, destpath, skip_static_asset_download=True)
+    #archive_page(url, destpath)
 
     # mathjax_dest = destpath + "/cdn.jsdelivr.net/npm/mathjax@3/"
     # shutil.rmtree(mathjax_dest + "es5")
@@ -164,8 +163,12 @@ def download_book_page(url, thumbnail, title):
     links_to_replace = {}
 
     global dep_zip
-    global dep_zip_file
+    dep_zip_file = HTMLZipFile(dep_zip, preset=le_utils.constants.format_presets.HTML5_DEPENDENCY_ZIP)
+    #dep_zip_file.preset = le_utils.constants.format_presets.HTML5_DEPENDENCY_ZIP
+    print("JASON DEBUG - #$%@#!$^#$%^^@#$%&^#$%%@$#%@#%$#@%@#$%@#$%@#$%@#$%@#$%@#$%@#$%#&&^(*(")
+    print(dep_zip_file.preset)
 
+    dep_file_reference = '/zipcontent/{}.zip/'.format(dep_zip_file.checksum)
     assets_ref = './'
     pie_ref = '../../PIE/'
     for link in local_links:
@@ -173,10 +176,9 @@ def download_book_page(url, thumbnail, title):
             # content_info['needs_dep_zip'] = True
             # dep_zip_pie_ref = '{}/PIE/'.format(os.path.basename(dep_zip))
             # links_to_replace[pie_ref] = dep_zip_pie_ref
-
         if link.startswith(assets_ref):
             # content_info['needs_dep_zip'] = True
-            dep_zip_assets_ref = '/zipcontent/{}.zip/{}'.format(dep_zip_file.checksum, link[2:])
+            dep_zip_assets_ref = dep_file_reference + link[2:]
             links_to_replace[link] = dep_zip_assets_ref
 
         # find and patch any Three.js references in the sources that are not part of the PIE package.
@@ -190,10 +192,10 @@ def download_book_page(url, thumbnail, title):
 
     # TODO Jason - very hack just trying to get pretext working
     # this is for custom data attributes on some tags that are interpreted as URLs by PreteXt javascript
-    new_html = new_html.replace("\"_static", "\"./localhost:8080/_static")
-    new_html = new_html.replace("\"./knowl", "\"./localhost:8080/knowl")
+    new_html = new_html.replace("\"_static", "\"" + dep_file_reference + "./localhost:8080/_static")
+    new_html = new_html.replace("\"./knowl", "\"" + dep_file_reference  + "./localhost:8080/knowl")
 
-    print(new_html)
+    #print(new_html)
 
     # isolate the index.html it it's own folder, all resources should now be coming out of the dep zip
     new_dest = destpath + "/PRETEXT_INDEX_ALONE_" + os.path.basename(destpath)
@@ -269,6 +271,9 @@ def download_depedency_zip_files(url, thumbnail, title):
         # with CSS
         shutil.copytree(source_dir + asset_dir, pretext_dest + asset_dir, dirs_exist_ok=True, ignore=shutil.ignore_patterns('theme.css'))
 
+    # TODO Jason likely bring this back?
+    #os.remove(destpath + "/index.html")
+
     f = open(destpath + "/index.html", "wb")
     global cache_invalidator_string
     f.write(("<html><body>This is the depedency zip</body></html>" + cache_invalidator_string).encode("utf-8"))
@@ -277,9 +282,7 @@ def download_depedency_zip_files(url, thumbnail, title):
     zippath = create_predictable_zip(destpath)
 
     global dep_zip
-    global dep_zip_file
     dep_zip = zippath
-    dep_zip_file = HTMLZipFile(dep_zip, preset=le_utils.constants.format_presets.HTML5_DEPENDENCY_ZIP)
     return None
 
 def process_wikipedia_page(content, baseurl, destpath, **kwargs):
@@ -301,12 +304,12 @@ if __name__ == "__main__":
         ./sushichef.py --token=YOURSTUDIOTOKENHERE9139139f3a23232
     """
 
-    current_file_dir = Path(__file__).resolve().parent
-    cache_dirs = [".ricecookerfilecache", ".webcache", "chefdata", "restore", "storage"]
-    for cache_dir in cache_dirs:
-        full_cache_dir = current_file_dir / cache_dir
-        if Path(full_cache_dir).exists():
-            shutil.rmtree(full_cache_dir)
+    # current_file_dir = Path(__file__).resolve().parent
+    # cache_dirs = [".ricecookerfilecache", ".webcache", "chefdata", "restore", "storage"]
+    # for cache_dir in cache_dirs:
+    #     full_cache_dir = current_file_dir / cache_dir
+    #     if Path(full_cache_dir).exists():
+    #         shutil.rmtree(full_cache_dir)
 
     wikichef = WikipediaChef()
     wikichef.main()

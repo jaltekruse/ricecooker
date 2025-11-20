@@ -301,6 +301,8 @@ def download_static_assets(  # noqa: C901
     run_js=False,
     resource_urls=None,
     relative_links=False,
+    # I know this seems kind of nonsensical, see doc string below
+    skip_static_asset_download=False
 ):
     """
     Download all static assets referenced from an HTML page.
@@ -321,6 +323,11 @@ def download_static_assets(  # noqa: C901
             which is expected to return JS content with any modifications.
         css_middleware: If specificed, CSS content will be passed into this callback
             which is expected to return CSS content with any modifications.
+        skip_static_asset_download: I know this seems kind of nonsensical given the name
+            of this function, but this doesn't just download resources, it also rewrites
+            links inside of the index.html document, there are TODOs hanging around proposing
+            these two behaviors should be separated, but for now, more hacks it is, for the
+            sake of speeding up scripts
 
     Return the modified page HTML with links rewritten to the locations of the
     downloaded static files, as a BeautifulSoup object. (Call str() on it to
@@ -355,7 +362,7 @@ def download_static_assets(  # noqa: C901
                     )
 
                 fullpath = os.path.join(destination, filename)
-                if not os.path.exists(fullpath):
+                if not os.path.exists(fullpath) and not skip_static_asset_download:
                     LOGGER.info("Downloading {} to filename {}".format(url, fullpath))
                     download_file(
                         url,
@@ -417,7 +424,7 @@ def download_static_assets(  # noqa: C901
             node[attr] = new_url
 
             fullpath = os.path.join(destination, filename)
-            if not os.path.exists(fullpath):
+            if not os.path.exists(fullpath) and not skip_static_asset_download:
                 LOGGER.info("Downloading {} to filename {}".format(url, fullpath))
                 download_file(
                     url,
@@ -426,7 +433,7 @@ def download_static_assets(  # noqa: C901
                     filename=filename,
                     middleware_callbacks=content_middleware,
                 )
-            elif content_middleware:
+            elif content_middleware and not skip_static_asset_download:
                 # Make sure we run middleware, as it creates a list of file dependencies that we need when
                 # converting the content into a zip file.
                 # TODO: We should probably separate out the download step from the middleware step, so
@@ -504,7 +511,7 @@ def download_static_assets(  # noqa: C901
                 new_url = derived_filename
 
             fullpath = os.path.join(destination, derived_filename)
-            if not os.path.exists(fullpath):
+            if not os.path.exists(fullpath) and not skip_static_asset_download:
                 download_file(
                     src_url,
                     destination,
@@ -601,14 +608,14 @@ def download_static_assets(  # noqa: C901
                         )
 
                         global archiver
-                        if archiver:
+                        if archiver and not skip_static_asset_download:
                             info = archiver.get_page(
                                 download_url, link_policy=policy, run_js=run_js
                             )
                             filename = info["index_path"].replace(
                                 archiver.root_dir + os.sep, ""
                             )
-                        else:
+                        elif not skip_static_asset_download:
                             info = archive_page(
                                 download_url,
                                 destination,
@@ -619,6 +626,8 @@ def download_static_assets(  # noqa: C901
                             filename = info["index_path"].replace(
                                 destination + os.sep, ""
                             )
+                        else:
+                            info = {}
 
                         new_url = filename
                         downloaded_pages[download_url] = new_url
@@ -637,7 +646,7 @@ def download_static_assets(  # noqa: C901
                 else:
                     full_path = os.path.join(destination, derived_filename)
                     new_url = derived_filename
-                    if not os.path.exists(full_path):
+                    if not os.path.exists(full_path) and not skip_static_asset_download:
                         LOGGER.info("Downloading file {}".format(url))
                         download_file(url, destination, filename=derived_filename)
                     else:
@@ -800,7 +809,8 @@ def archive_page(
         def get_resource_filename(url, destination):
             return get_archive_filename(url, destination, page_url, download_root, resource_urls)
 
-        if skip_static_asset_download:
+        # TODO JASON delete
+        if False and skip_static_asset_download:
            if not isinstance(content, BeautifulSoup):
                doc = BeautifulSoup(content, features="lxml", preserve_whitespace_tags=["p", "code", "textarea"])
         else:
@@ -813,6 +823,7 @@ def archive_page(
                     run_js=run_js,
                     resource_urls=resource_urls,
                     relative_links=relative_links,
+                    skip_static_asset_download=skip_static_asset_download,
                 )
 
         download_path = os.path.join(
@@ -965,7 +976,7 @@ class ArchiveDownloader:
         info = self.cache_data[url]
         # lxml enables some nice features like being able to search for individual
         # class names using BeautifulSoup, so let's just require it.
-        soup = BeautifulSoup(open(info["index_path"], "rb"), features="lxml")
+        soup = BeautifulSoup(open(info["index_path"], "rb"), features="lxml", preserve_whitespace_tags=["p", "code", "textarea"])
         return soup
 
     def create_dependency_zip(self, count_threshold=2):
