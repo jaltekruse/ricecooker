@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 import os
+import re
 import tempfile
 
 import shutil
@@ -28,11 +29,11 @@ from le_utils.constants import file_formats, format_presets
 
 
 # CHANNEL SETTINGS
-SOURCE_DOMAIN = "https://runestone.academy/ns/books/published/FOPP-PIE/ThinkLikeComputer.html"  #
-SOURCE_ID = "thinkcspi_runestone_academy"  # an alphanumeric ID refering to this channel
-CHANNEL_TITLE = "How to Think Like a Computer Scientist, Interactive Edition"  # a humand-readbale title
-# SOURCE_ID = "thinkcspi_runestone_academy_nov_18"  # an alphanumeric ID refering to this channel
-# CHANNEL_TITLE = "New Name - How to Think Like a Computer Scientist, Interactive Edition"  # a humand-readbale title
+SOURCE_DOMAIN = "https://runestone.academy/ns/books/published/FOPP-PIE/ThinkLikeComputer.html"
+# SOURCE_ID = "thinkcspi_runestone_academy"  # an alphanumeric ID refering to this channel
+# CHANNEL_TITLE = "How to Think Like a Computer Scientist, Interactive Edition"  # a humand-readbale title
+SOURCE_ID = "thinkcspi_runestone_academy_nov_20c"  # an alphanumeric ID refering to this channel
+CHANNEL_TITLE = "Nov 20th C WIP - How to Think Like a Computer Scientist, Interactive Edition"  # a humand-readbale title
 
 #SOURCE_ID = "jason_pretext_test_new_id"  # an alphanumeric ID refering to this channel
 #CHANNEL_TITLE = "Jason PreteXt testing"
@@ -50,7 +51,11 @@ sess.mount("https://", forever_adapter)
 
 dep_zip = None
 
-cache_invalidator_string = "                                                                       "
+cache_invalidator_string = "                                                                         "
+
+orig_urls_to_node_ids = {}
+
+youtube_codes = []
 
 def make_fully_qualified_url(url):
     if url.startswith("//"):
@@ -132,17 +137,26 @@ def add_subpages_from_pretext_toc(channel, list_url):
         title = chapter_number + " - " + chapter.findNext("span").findNext("span").text
         chapter_topic = TopicNode(source_id=chapter.findNext("a").attrs["href"], title=title)
 
+        chapter_summary_node_added = False
+        chapter_summary_url = DOMAIN + chapter.findNext("a").attrs["href"]
+
         for sub_chapter in list(chapter.find_all("ul", recursive=False))[0].find_all("li", recursive=False):
             sub_chap_number = sub_chapter.findNext("span").text
             sub_chap_title = sub_chap_number + " - " + sub_chapter.findNext("span").findNext("span").text
             #sub_chapter_topic = TopicNode(source_id=sub_chapter.findNext("a").attrs["href"], title=sub_chap_title)
             # chapter_topic.add_child(sub_chapter_topic)
 
-            if "2.2" in sub_chap_title:
+            if True or "2.2" in sub_chap_title or "2.3" in sub_chap_title or "2.4" in sub_chap_title:
+            # if "1." in sub_chap_title or "2." in sub_chap_title or "3." in sub_chap_title:
                 sub_chap_url = DOMAIN + list(sub_chapter.find_all("a", recursive="False"))[0].attrs["href"]
                 if dep_zip is None:
                     download_depedency_zip_files(sub_chap_url, thumbnail=None, title=sub_chap_title)
                 html5app = download_book_page(sub_chap_url, thumbnail=None, title=sub_chap_title)
+                if not chapter_summary_node_added:
+                    # add a page for the chapter overview, to give us a place to link to for that entry in the table of contents
+                    chapter_html5app = download_book_page(chapter_summary_url, thumbnail=None, title=title)
+                    chapter_topic.add_child(chapter_html5app)
+                    chapter_summary_node_added = True
                 chapter_topic.add_child(html5app)
 
         channel.add_child(chapter_topic)
@@ -168,7 +182,7 @@ def download_book_page(url, thumbnail, title):
     print("JASON DEBUG - #$%@#!$^#$%^^@#$%&^#$%%@$#%@#%$#@%@#$%@#$%@#$%@#$%@#$%@#$%@#$%#&&^(*(")
     print(dep_zip_file.preset)
 
-    dep_file_reference = '/zipcontent/{}.zip/'.format(dep_zip_file.checksum)
+    dep_file_reference = '/content/zipcontent/{}.zip/'.format(dep_zip_file.checksum)
     assets_ref = './'
     pie_ref = '../../PIE/'
     for link in local_links:
@@ -195,7 +209,14 @@ def download_book_page(url, thumbnail, title):
     new_html = new_html.replace("\"_static", "\"" + dep_file_reference + "./localhost:8080/_static")
     new_html = new_html.replace("\"./knowl", "\"" + dep_file_reference  + "./localhost:8080/knowl")
 
-    #print(new_html)
+    # replace other URLs with navigation events to visit other node in the Kolibri tree
+    for orig_url in orig_urls_to_node_ids:
+        new_html = new_html.replace("href=\"" + orig_url,
+                                    "onClick=\"window.kolibri.navigateTo('{}')"
+                                    .format(orig_urls_to_node_ids[orig_url]))
+
+    youtube_codes.extend(re.findall(r"youtube.*/embed/(.*)\?", new_html))
+    print(new_html)
 
     # isolate the index.html it it's own folder, all resources should now be coming out of the dep zip
     new_dest = destpath + "/PRETEXT_INDEX_ALONE_" + os.path.basename(destpath)
@@ -313,4 +334,7 @@ if __name__ == "__main__":
 
     wikichef = WikipediaChef()
     wikichef.main()
+    orig_urls_to_node_ids = dict(map(lambda x: (x.source_id, x.node_id), wikichef.tree.all_nodes))
+    wikichef.main()
+    print("done")
 
