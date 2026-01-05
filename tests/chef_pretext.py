@@ -4,7 +4,6 @@ import re
 import tempfile
 
 import shutil
-from pathlib import Path
 
 import le_utils
 import requests
@@ -32,8 +31,12 @@ from le_utils.constants import file_formats, format_presets
 SOURCE_DOMAIN = "https://runestone.academy/ns/books/published/FOPP-PIE/ThinkLikeComputer.html"
 # SOURCE_ID = "thinkcspi_runestone_academy"  # an alphanumeric ID refering to this channel
 # CHANNEL_TITLE = "How to Think Like a Computer Scientist, Interactive Edition"  # a humand-readbale title
-SOURCE_ID = "thinkcspi_runestone_academy_nov_20c"  # an alphanumeric ID refering to this channel
+SOURCE_ID = "thinkcspy_runestone_academy_nov_20c"  # an alphanumeric ID refering to this channel
 CHANNEL_TITLE = "Nov 20th C WIP - How to Think Like a Computer Scientist, Interactive Edition"  # a humand-readbale title
+
+# youtube ids {'SGVgAV0v-Ww', 'Yxyx6KpKRzY', 'aqhREpceEMI', '3WgmLIsXFkI', '57dPVbnRouU', 'YK8QlIT3__M', 'xGSfiZt5cdw',
+# 'GCLHuPBtLdQ', 'Fd4a8ktQURc', 'blTBEqybQmQ', 'vNfCfowr-pQ', 'HriDtn-0Dcw', 'LD-F4RODy-I', '1uQM-TVlaMo', 'LZ7H1X8ar9E',
+# 'Ezve3QJv6Aw', 'Px1c-3GP-5o', '2KYixkCBXSQ', '4wKtB57J5J4', 'G86akhNFHZA'}
 
 #SOURCE_ID = "jason_pretext_test_new_id"  # an alphanumeric ID refering to this channel
 #CHANNEL_TITLE = "Jason PreteXt testing"
@@ -70,8 +73,8 @@ def make_fully_qualified_url(url):
 
 def make_request(url, *args, **kwargs):
     response = sess.get(url, *args, **kwargs)
-    print("JASON DEBUG")
-    print(response.status_code)
+    #print("JASON DEBUG")
+    #print(response.status_code)
     if response.status_code != 200:
         #print(response.text)
         LOGGER.warning("URL NOT FOUND: " + url)
@@ -179,8 +182,8 @@ def download_book_page(url, thumbnail, title):
     global dep_zip
     dep_zip_file = HTMLZipFile(dep_zip, preset=le_utils.constants.format_presets.HTML5_DEPENDENCY_ZIP)
     #dep_zip_file.preset = le_utils.constants.format_presets.HTML5_DEPENDENCY_ZIP
-    print("JASON DEBUG - #$%@#!$^#$%^^@#$%&^#$%%@$#%@#%$#@%@#$%@#$%@#$%@#$%@#$%@#$%@#$%#&&^(*(")
-    print(dep_zip_file.preset)
+    #print("JASON DEBUG - #$%@#!$^#$%^^@#$%&^#$%%@$#%@#%$#@%@#$%@#$%@#$%@#$%@#$%@#$%@#$%#&&^(*(")
+    #print(dep_zip_file.preset)
 
     dep_file_reference = '/content/zipcontent/{}.zip/'.format(dep_zip_file.checksum)
     assets_ref = './'
@@ -216,7 +219,7 @@ def download_book_page(url, thumbnail, title):
                                     .format(orig_urls_to_node_ids[orig_url]))
 
     youtube_codes.extend(re.findall(r"youtube.*/embed/(.*)\?", new_html))
-    print(new_html)
+    #print(new_html)
 
     # isolate the index.html it it's own folder, all resources should now be coming out of the dep zip
     new_dest = destpath + "/PRETEXT_INDEX_ALONE_" + os.path.basename(destpath)
@@ -336,5 +339,7 @@ if __name__ == "__main__":
     wikichef.main()
     orig_urls_to_node_ids = dict(map(lambda x: (x.source_id, x.node_id), wikichef.tree.all_nodes))
     wikichef.main()
+    # print deduplicated list of youtube video ids
+    print(set(youtube_codes))
     print("done")
 
