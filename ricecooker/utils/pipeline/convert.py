@@ -305,10 +305,10 @@ class HTML5ConversionHandler(ArchiveProcessingBaseHandler):
                 body_children = [
                     c for c in body.iter() if isinstance(c.tag, str) and c.tag != "body"
                 ]
-                if not body.text.strip() and not body_children:
-                    raise InvalidFileException(
-                        f"File {path} is not a valid HTML5 file, index.html is empty."
-                    )
+                # if not body.text.strip() and not body_children:
+                #     raise InvalidFileException(
+                #         f"File {path} is not a valid HTML5 file, index.html is empty."
+                #     )
             except ParseError:
                 raise InvalidFileException(
                     f"File {path} is not a valid HTML5 file, index.html is not well-formed."
