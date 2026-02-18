@@ -12,8 +12,7 @@ from ricecooker.utils import downloader
 
 PORT = 8181
 
-# if any changes are needed in the files served out of the "samples" folder, you need to delete the .webcache folder
-# that is generated at the project root for the tests to be rerun
+
 @pytest.fixture(scope="module")
 def http_local_server():
     # Get the directory containing the current file
@@ -35,7 +34,7 @@ def http_local_server():
             print("serving at port", PORT)
             try:
                 httpd.serve_forever()
-            except:
+            except Exception:
                 httpd.server_close()
 
     server_spawning_thread = Thread(target=spawn_http_server, args=(10,))
@@ -44,6 +43,8 @@ def http_local_server():
     return server_spawning_thread
 
 
+# if any changes are needed in the files served out of the "samples" folder, you need to delete the .webcache folder
+# that is generated at the project root for the tests to be rerun
 @pytest.mark.usefixtures("http_local_server")
 class TestArchiver(unittest.TestCase):
     def test_get_archive_filename_absolute(self):
