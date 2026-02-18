@@ -1,14 +1,14 @@
+import http.server
 import os
+import shutil
 import unittest
 from datetime import datetime
+from pathlib import Path
+from threading import Thread
 
 import pytest
-from pathlib import Path
 
 from ricecooker.utils import downloader
-import http.server
-from threading import Thread
-import shutil
 
 PORT = 8181
 
@@ -27,11 +27,11 @@ def http_local_server():
             super().__init__(*args, directory=test_content_path, **kwargs)
 
     def spawn_http_server(arg):
-        with  http.server.HTTPServer(("", PORT), Handler) as httpd:
+        with http.server.HTTPServer(("", PORT), Handler) as httpd:
             # this is a behavior to treat extensionless files as CSS is used by
             # the test test_pretextbook_css_fetch below, see the docs on that test
             # method for more info
-            Handler.extensions_map = {'': 'text/css'}
+            Handler.extensions_map = {"": "text/css"}
             print("serving at port", PORT)
             try:
                 httpd.serve_forever()
@@ -43,9 +43,9 @@ def http_local_server():
     server_spawning_thread.start()
     return server_spawning_thread
 
+
 @pytest.mark.usefixtures("http_local_server")
 class TestArchiver(unittest.TestCase):
-
     def test_get_archive_filename_absolute(self):
         link = "https://learningequality.org/kolibri.png"
 
@@ -121,26 +121,60 @@ class TestArchiver(unittest.TestCase):
     # if another test needs different behavior this may need to be customized or have the fixture be scoped to this test
     # but for now it seems useful to share the resource between this and other future tests.
     def test_pretextbook_css_fetch(self):
-        sushi_url = "http://localhost:" + str(PORT) + "/samples/PreTeXt_book_test/activecalculus.org/single2e/sec-5-2-FTC2.html"
-        dest_dir = "active_calc_2e_again_" + datetime.now().strftime("%Y-%m-%d_%H:%M:%S")
+        sushi_url = (
+            "http://localhost:"
+            + str(PORT)
+            + "/samples/PreTeXt_book_test/activecalculus.org/single2e/sec-5-2-FTC2.html"
+        )
+        dest_dir = "active_calc_2e_again_" + datetime.now().strftime(
+            "%Y-%m-%d_%H:%M:%S"
+        )
         current_file_dir = Path(__file__).resolve().parent
         downloads_dir = current_file_dir.parent / "downloads"
         try:
             archive = downloader.ArchiveDownloader("downloads/" + dest_dir)
             archive.get_page(sushi_url)
 
-            book_dest_dir = downloads_dir / dest_dir / "localhost:8181" / "samples" / "PreTeXt_book_test"
-            with open(book_dest_dir / "activecalculus.org" / "single2e" / "sec-5-2-FTC2.html", 'r') as file:
+            book_dest_dir = (
+                downloads_dir
+                / dest_dir
+                / "localhost:8181"
+                / "samples"
+                / "PreTeXt_book_test"
+            )
+            with open(
+                book_dest_dir / "activecalculus.org" / "single2e" / "sec-5-2-FTC2.html",
+                "r",
+            ) as file:
                 page_html = file.read()
-                assert "link href=\"../../fonts.googleapis.com/css2_family_Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0/index.css" in page_html
+                assert (
+                    'link href="../../fonts.googleapis.com/css2_family_Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0/index.css'
+                    in page_html
+                )
 
-            with open(book_dest_dir / "fonts.googleapis.com" / "css2_family_Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0" / "index.css", 'r') as file:
+            with open(
+                book_dest_dir
+                / "fonts.googleapis.com"
+                / "css2_family_Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0"
+                / "index.css",
+                "r",
+            ) as file:
                 css_file_contents = file.read()
                 # this has an extra '..' compared to what is in the original extensionless css file, because in the course of generating an index.css
                 # file to have clear extensions in the archived version the file ends up nested down another level
-                assert "src: url(\"../../fonts.gstatic.com/s/materialsymbolsoutlined" in css_file_contents
+                assert (
+                    'src: url("../../fonts.gstatic.com/s/materialsymbolsoutlined'
+                    in css_file_contents
+                )
 
-            font_size = os.path.getsize(book_dest_dir / "fonts.gstatic.com" / "s" / "materialsymbolsoutlined" / "v290" / "material_symbols.woff")
+            font_size = os.path.getsize(
+                book_dest_dir
+                / "fonts.gstatic.com"
+                / "s"
+                / "materialsymbolsoutlined"
+                / "v290"
+                / "material_symbols.woff"
+            )
             assert font_size > 0
         finally:
             shutil.rmtree(downloads_dir / dest_dir)
