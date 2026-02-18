@@ -1,5 +1,6 @@
 import http.server
 import os
+import platform
 import shutil
 import unittest
 from datetime import datetime
@@ -121,11 +122,30 @@ class TestArchiver(unittest.TestCase):
     # Handler.extensions_map = {'': 'text/css'}
     # if another test needs different behavior this may need to be customized or have the fixture be scoped to this test
     # but for now it seems useful to share the resource between this and other future tests.
-    def test_pretextbook_css_fetch(self):
+    @pytest.mark.skipif(
+        platform.system() == "Windows",
+        reason="Fails on windows due to unallowed characters in URIs that get converted to paths.",
+    )
+    def test_pretextbook_css_fetch_colon_in_url(self):
+        self.pretextbook_css_fetch(
+            "PreTeXt_book_test",
+            "css2_family_Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0",
+        )
+
+    def test_pretextbook_css_fetch_windows_safe_chars_in_url(self):
+        # replaced colon with underscore to make safe for use in Windows path
+        self.pretextbook_css_fetch(
+            "PreTeXt_book_test_manually_cleaned_urls",
+            "css2_family_Material+Symbols+Outlined_opsz,wght,FILL,GRAD@24,400,0,0",
+        )
+
+    def pretextbook_css_fetch(self, root_page_folder, css_url_part):
         sushi_url = (
             "http://localhost:"
             + str(PORT)
-            + "/samples/PreTeXt_book_test/activecalculus.org/single2e/sec-5-2-FTC2.html"
+            + "/samples/"
+            + root_page_folder
+            + "/activecalculus.org/single2e/sec-5-2-FTC2.html"
         )
         dest_dir = "active_calc_2e_again_" + datetime.now().strftime(
             "%Y-%m-%d_%H:%M:%S"
@@ -141,7 +161,7 @@ class TestArchiver(unittest.TestCase):
                 / dest_dir
                 / "localhost:8181"
                 / "samples"
-                / "PreTeXt_book_test"
+                / root_page_folder
             )
             with open(
                 book_dest_dir / "activecalculus.org" / "single2e" / "sec-5-2-FTC2.html",
@@ -149,15 +169,14 @@ class TestArchiver(unittest.TestCase):
             ) as file:
                 page_html = file.read()
                 assert (
-                    'link href="../../fonts.googleapis.com/css2_family_Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0/index.css'
+                    'link href="../../fonts.googleapis.com/'
+                    + css_url_part
+                    + "/index.css"
                     in page_html
                 )
 
             with open(
-                book_dest_dir
-                / "fonts.googleapis.com"
-                / "css2_family_Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0"
-                / "index.css",
+                book_dest_dir / "fonts.googleapis.com" / css_url_part / "index.css",
                 "r",
             ) as file:
                 css_file_contents = file.read()
