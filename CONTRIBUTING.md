@@ -125,8 +125,13 @@ Here are the steps for setting up `ricecooker` for local development:
 
    To get `flake8` and `tox`, just `pip install` them into your virtualenv.
 
+   To run the tests you will need to install the extra depedencies tagged "test"
+   ```
+   pip install -e .[test]
+   ```
 
-7. Commit your changes and push your branch to GitHub:
+
+8. Commit your changes and push your branch to GitHub:
 
     ```
     git add .
@@ -135,7 +140,7 @@ Here are the steps for setting up `ricecooker` for local development:
     ```
 
 
-8. Open a pull request through the GitHub web interface.
+9. Open a pull request through the GitHub web interface.
 
 
 
