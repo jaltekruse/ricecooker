@@ -52,6 +52,7 @@ class SushiChef(object):
     DOMAIN_AUTH_HEADERS = (
         {}
     )  # dict of {domain: {header: env var name}} for requests auth
+    tree = None
 
     channel_node_class = nodes.ChannelNode
 
@@ -501,6 +502,7 @@ class SushiChef(object):
         # TODO(Kevin): move self.download_content() call here
         self.pre_run(args, options)
         uploadchannel_wrapper(self, args, options)
+        self.tree = config.PROGRESS_MANAGER.tree
 
     def main(self):
         """
