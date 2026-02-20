@@ -23,6 +23,7 @@ from selenium import webdriver
 from ricecooker.config import LOGGER
 from ricecooker.config import PHANTOMJS_PATH
 from ricecooker.config import STRICT
+from ricecooker.utils import web
 from ricecooker.utils.caching import CacheControlAdapter
 from ricecooker.utils.caching import CacheForeverHeuristic
 from ricecooker.utils.html import download_file
@@ -261,10 +262,30 @@ _CSS_URL_RE = re.compile(r"url\(['\"]?(.*?)['\"]?\)")
 _CSS_IMPORT_RE = re.compile(r"@import['\"](.*?)['\"]")
 
 # TODO(davidhu): Use MD5 hash of URL (ideally file) instead.
-def _derive_filename(url):
+def _derive_filename(url, destination):
     name = os.path.basename(urlparse(url).path).replace("%", "_")
-    return ("%s.%s" % (uuid.uuid4().hex, name)).lower()
+    orig_ret = ("%s.%s" % (uuid.uuid4().hex, name)).lower()
+    filename = orig_ret
+    _path, ext = os.path.splitext(filename)
+    subpath = filename
+    valid_extension = ext in ['.html', '.css', '.js', '.jpeg', '.png', '.svg', '.woff', '.eot', '.woff2', '.ttf']
+    if not ext or not valid_extension:
+        # This COULD be an index file in a dir, or just a file with no extension. Handle either case by
+        # turning the path into filename + '/index' + the file extension from the content type
+        response = requests.get(url)
+        type = response.headers["content-type"].split(";")[0]
+        ext = mimetypes.guess_extension(type)
+        # if we're really stuck, just default to HTML as that is most likely if this is a redirect.
+        if not ext:
+            ext = ".html"
 
+        # Add the existing filename in front of index.xxx, this can contain slashes and those will result
+        # in subdirectories created in the downloaded version. This ensures multiple instances of extensionless
+        # resources referenced from a page won't clobber each other.
+        filename = filename + "/index{}".format(ext)
+        os.makedirs(os.path.join(destination, subpath), exist_ok=True)
+
+    return filename
 
 # TODO: The number of args and inner functions in this strongly suggest this needs
 # to be a class or have its functionality separated out.
@@ -281,6 +302,8 @@ def download_static_assets(  # noqa: C901
     run_js=False,
     resource_urls=None,
     relative_links=False,
+    # I know this seems kind of nonsensical, see doc string below
+    skip_static_asset_download=False
 ):
     """
     Download all static assets referenced from an HTML page.
@@ -301,6 +324,11 @@ def download_static_assets(  # noqa: C901
             which is expected to return JS content with any modifications.
         css_middleware: If specificed, CSS content will be passed into this callback
             which is expected to return CSS content with any modifications.
+        skip_static_asset_download: I know this seems kind of nonsensical given the name
+            of this function, but this doesn't just download resources, it also rewrites
+            links inside of the index.html document, there are TODOs hanging around proposing
+            these two behaviors should be separated, but for now, more hacks it is, for the
+            sake of speeding up scripts
 
     Return the modified page HTML with links rewritten to the locations of the
     downloaded static files, as a BeautifulSoup object. (Call str() on it to
@@ -313,7 +341,7 @@ def download_static_assets(  # noqa: C901
     LOGGER.debug("base_url = {}".format(base_url))
 
     if not isinstance(doc, BeautifulSoup):
-        doc = BeautifulSoup(doc, "lxml")
+        doc = BeautifulSoup(doc, features="lxml", preserve_whitespace_tags=web.PRESERVE_WHITESPACE_TAGS)
 
     def download_srcset(selector, attr, content_middleware=None):
         nodes = doc.select(selector)
@@ -326,16 +354,16 @@ def download_static_assets(  # noqa: C901
                 # a source can be just a URL, or a URL + a space character and then a width or resolution.
                 parts = source.split(" ")
                 url = urljoin(base_url, parts[0])
-                filename = derive_filename(url)
+                filename = derive_filename(url, destination)
                 new_url = filename
                 if relative_links and base_url:
-                    base_filename = derive_filename(base_url)
+                    base_filename = derive_filename(base_url, destination)
                     new_url = get_relative_url_for_archive_filename(
                         filename, base_filename
                     )
 
                 fullpath = os.path.join(destination, filename)
-                if not os.path.exists(fullpath):
+                if not os.path.exists(fullpath) and not skip_static_asset_download:
                     LOGGER.info("Downloading {} to filename {}".format(url, fullpath))
                     download_file(
                         url,
@@ -387,7 +415,7 @@ def download_static_assets(  # noqa: C901
             if url_middleware:
                 url = url_middleware(url)
 
-            filename = derive_filename(url)
+            filename = derive_filename(url, destination)
             _path, ext = os.path.splitext(filename)
             if not ext:
                 # This COULD be an index file in a dir, or just a file with no extension. Handle either case by
@@ -411,10 +439,11 @@ def download_static_assets(  # noqa: C901
             if relative_links and base_url:
                 base_filename = get_archive_filename(base_url)
                 new_url = get_relative_url_for_archive_filename(filename, base_filename)
+            new_url = "./" + new_url
             node[attr] = new_url
 
             fullpath = os.path.join(destination, filename)
-            if not os.path.exists(fullpath):
+            if not os.path.exists(fullpath) and not skip_static_asset_download:
                 LOGGER.info("Downloading {} to filename {}".format(url, fullpath))
                 download_file(
                     url,
@@ -423,7 +452,7 @@ def download_static_assets(  # noqa: C901
                     filename=filename,
                     middleware_callbacks=content_middleware,
                 )
-            elif content_middleware:
+            elif content_middleware and not skip_static_asset_download:
                 # Make sure we run middleware, as it creates a list of file dependencies that we need when
                 # converting the content into a zip file.
                 # TODO: We should probably separate out the download step from the middleware step, so
@@ -486,11 +515,12 @@ def download_static_assets(  # noqa: C901
                 print("        Skipping downloading blacklisted url", src_url)
                 return ""
 
-            derived_filename = derive_filename(src_url)
+            # JASON TEMP MARKER
+            derived_filename = derive_filename(src_url, destination)
 
             new_url = src
             if url and parts.path.startswith("/") or relative_links:
-                page_filename = derive_filename(url)
+                page_filename = derive_filename(url, destination)
                 new_url = get_relative_url_for_archive_filename(
                     derived_filename, page_filename
                 )
@@ -500,12 +530,14 @@ def download_static_assets(  # noqa: C901
                 new_url = derived_filename
 
             fullpath = os.path.join(destination, derived_filename)
-            if not os.path.exists(fullpath):
+            if not os.path.exists(fullpath) and not skip_static_asset_download:
                 download_file(
                     src_url,
                     destination,
                     request_fn=request_fn,
                     filename=derived_filename,
+                    # TODO JASON - Hacky check for CSS
+                    middleware_callbacks= css_content_middleware if (derived_filename.endswith(".css")) else None,
                 )
             else:
                 LOGGER.debug(
@@ -586,7 +618,7 @@ def download_static_assets(  # noqa: C901
                     ".xhtml",
                     "",
                 ]
-                derived_filename = derive_filename(download_url)
+                derived_filename = derive_filename(download_url, destination)
                 new_url = derived_filename
                 if is_html:
                     if download_url not in downloaded_pages:
@@ -595,14 +627,14 @@ def download_static_assets(  # noqa: C901
                         )
 
                         global archiver
-                        if archiver:
+                        if archiver and not skip_static_asset_download:
                             info = archiver.get_page(
                                 download_url, link_policy=policy, run_js=run_js
                             )
                             filename = info["index_path"].replace(
                                 archiver.root_dir + os.sep, ""
                             )
-                        else:
+                        elif not skip_static_asset_download:
                             info = archive_page(
                                 download_url,
                                 destination,
@@ -613,6 +645,8 @@ def download_static_assets(  # noqa: C901
                             filename = info["index_path"].replace(
                                 destination + os.sep, ""
                             )
+                        else:
+                            info = {}
 
                         new_url = filename
                         downloaded_pages[download_url] = new_url
@@ -624,14 +658,14 @@ def download_static_assets(  # noqa: C901
                         new_url = downloaded_pages[download_url]
 
                     if relative_links and base_url:
-                        page_filename = derive_filename(base_url)
+                        page_filename = derive_filename(base_url, destination)
                         new_url = get_relative_url_for_archive_filename(
                             new_url, page_filename
                         )
                 else:
                     full_path = os.path.join(destination, derived_filename)
                     new_url = derived_filename
-                    if not os.path.exists(full_path):
+                    if not os.path.exists(full_path) and not skip_static_asset_download:
                         LOGGER.info("Downloading file {}".format(url))
                         download_file(url, destination, filename=derived_filename)
                     else:
@@ -653,8 +687,8 @@ def download_static_assets(  # noqa: C901
 
     return doc
 
-
-def get_archive_filename(url, page_url=None, download_root=None, resource_urls=None):
+# TODO JASON - do I also need to update this?
+def get_archive_filename(url, destination, page_url=None, download_root=None, resource_urls=None):
     file_url_parsed = urlparse(url)
     page_url_parsed = None
     page_domain = None
@@ -702,7 +736,28 @@ def get_archive_filename(url, page_url=None, download_root=None, resource_urls=N
         if os.path.splitext(local_path)[1].strip() != "":
             LOGGER.debug("replacing {} with {}".format(url, local_path))
             resource_urls[url] = local_path
-    return local_path
+
+    filename = local_path
+    _path, ext = os.path.splitext(filename)
+    subpath = filename
+    # TODO Jason - VERY HACKY BAD, URLs can contain dots, they don't always mean treat everything after the last dot as a file extension...
+    valid_extension = ext in ['.html', '.css', '.js', '.jpeg', '.png', '.svg', '.woff', '.eot', '.woff2', '.ttf']
+    if not ext or not valid_extension:
+        # This COULD be an index file in a dir, or just a file with no extension. Handle either case by
+        # turning the path into filename + '/index' + the file extension from the content type
+        response = requests.get(url)
+        type = response.headers["content-type"].split(";")[0]
+        ext = mimetypes.guess_extension(type)
+        # if we're really stuck, just default to HTML as that is most likely if this is a redirect.
+        if not ext:
+            ext = ".html"
+
+        # Add the existing filename in front of index.xxx, this can contain slashes and those will result
+        # in subdirectories created in the downloaded version. This ensures multiple instances of extensionless
+        # resources referenced from a page won't clobber each other.
+        filename = filename + "/index{}".format(ext)
+        os.makedirs(os.path.join(destination, subpath), exist_ok=True)
+    return filename
 
 
 def get_relative_url_for_archive_filename(filename, relative_to):
@@ -714,6 +769,7 @@ def get_relative_url_for_archive_filename(filename, relative_to):
 def archive_page(
     url,
     download_root,
+    skip_static_asset_download=False,
     link_policy=None,
     run_js=False,
     strict=False,
@@ -753,7 +809,7 @@ def archive_page(
         content = response.text
 
     # url may be redirected, for relative link handling we want the final URL that was loaded.
-    url = props["url"]
+    #url = props["url"]
 
     # get related assets
     parts = urlparse(url)
@@ -769,19 +825,25 @@ def archive_page(
         LOGGER.warning("Downloading linked files for {}".format(url))
         page_url = url
 
-        def get_resource_filename(url):
-            return get_archive_filename(url, page_url, download_root, resource_urls)
+        def get_resource_filename(url, destination):
+            return get_archive_filename(url, destination, page_url, download_root, resource_urls)
 
-        doc = download_static_assets(
-            content,
-            download_root,
-            base_url,
-            derive_filename=get_resource_filename,
-            link_policy=link_policy,
-            run_js=run_js,
-            resource_urls=resource_urls,
-            relative_links=relative_links,
-        )
+        # TODO JASON delete
+        if False and skip_static_asset_download:
+           if not isinstance(content, BeautifulSoup):
+               doc = BeautifulSoup(content, features="lxml", preserve_whitespace_tags=web.PRESERVE_WHITESPACE_TAGS)
+        else:
+            doc = download_static_assets(
+                    content,
+                    download_root,
+                    base_url,
+                    derive_filename=get_resource_filename,
+                    link_policy=link_policy,
+                    run_js=run_js,
+                    resource_urls=resource_urls,
+                    relative_links=relative_links,
+                    skip_static_asset_download=skip_static_asset_download,
+                )
 
         download_path = os.path.join(
             download_root, get_archive_filename(url, page_url, download_root)
@@ -793,6 +855,8 @@ def archive_page(
                 index_path = download_path + "index.html"
             else:
                 index_path = download_path + ".html"
+
+        index_path = download_root + "/index.html"
 
         index_dir = os.path.dirname(index_path)
 
@@ -809,9 +873,10 @@ def archive_page(
 
         os.makedirs(index_dir, exist_ok=True)
 
-        soup = BeautifulSoup(new_content, features="lxml")
+        soup = BeautifulSoup(new_content, features="lxml", preserve_whitespace_tags=web.PRESERVE_WHITESPACE_TAGS)
         f = open(index_path, "wb")
-        f.write(soup.prettify(encoding="utf-8"))
+        soup_str = str(soup)
+        f.write((soup_str + "                                               ").encode("utf-8"))
         f.close()
 
         page_info = {
@@ -930,7 +995,7 @@ class ArchiveDownloader:
         info = self.cache_data[url]
         # lxml enables some nice features like being able to search for individual
         # class names using BeautifulSoup, so let's just require it.
-        soup = BeautifulSoup(open(info["index_path"], "rb"), features="lxml")
+        soup = BeautifulSoup(open(info["index_path"], "rb"), features="lxml", preserve_whitespace_tags=web.PRESERVE_WHITESPACE_TAGS)
         return soup
 
     def create_dependency_zip(self, count_threshold=2):
