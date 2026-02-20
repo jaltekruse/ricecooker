@@ -33,7 +33,7 @@ setup(
         "le_utils>=0.2.10",
         "requests_file",
         "beautifulsoup4>=4.6.3,<4.9.0",  # pinned to match versions in le-pycaption
-        "selenium==4.35.0",
+        "selenium==4.36.0",
         "yt-dlp>=2024.12.23",
         "html5lib",
         "cachecontrol==0.14.3",
@@ -42,15 +42,15 @@ setup(
         "pypdf2==1.26.0",
         "dictdiffer>=0.8.0",
         "Pillow==11.3.0",
-        "colorlog>=4.1.0,<6.9",
+        "colorlog>=4.1.0,<6.11",
         "chardet==5.2.0",
         "ffmpy>=0.2.2",
         "pdf2image==1.17.0",
         "le-pycaption>=2.2.0a1",
         "EbookLib>=0.17.1",
         "filetype>=1.1.0",
-        "urllib3==2.5.0",
-        "langcodes[data]==3.5.0",
+        "urllib3==2.6.3",
+        "langcodes[data]==3.5.1",
     ],
     extras_require={
         "test": [
