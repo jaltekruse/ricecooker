@@ -811,7 +811,7 @@ def archive_page(
             return get_archive_filename(url, destination, page_url, download_root, resource_urls)
 
         # TODO JASON delete
-        if skip_static_asset_download:
+        if False or skip_static_asset_download:
             doc = content
             if (not isinstance(doc, BeautifulSoup)):
                 doc = BeautifulSoup(doc, features="lxml", preserve_whitespace_tags=web.PRESERVE_WHITESPACE_TAGS)
