@@ -28,11 +28,12 @@ from le_utils.constants import file_formats, format_presets
 
 
 # CHANNEL SETTINGS
-SOURCE_DOMAIN = "https://runestone.academy/ns/books/published/FOPP-PIE/ThinkLikeComputer.html"
+SOURCE_DOMAIN = "https://activecalculus.org/single2e/frontmatter.html"
 # SOURCE_ID = "thinkcspi_runestone_academy"  # an alphanumeric ID refering to this channel
 # CHANNEL_TITLE = "How to Think Like a Computer Scientist, Interactive Edition"  # a humand-readbale title
-SOURCE_ID = "thinkcspy_runestone_academy_nov_20c"  # an alphanumeric ID refering to this channel
-CHANNEL_TITLE = "Nov 20th C WIP - How to Think Like a Computer Scientist, Interactive Edition"  # a humand-readbale title
+SOURCE_ID = "active_calc_with_doenet"  # an alphanumeric ID refering to this channel
+#CHANNEL_TITLE = "Nov 20th C WIP - How to Think Like a Computer Scientist, Interactive Edition"  # a humand-readbale title
+CHANNEL_TITLE = "Active Calculus: with Doenet "  # a humand-readbale title
 
 # youtube ids {'SGVgAV0v-Ww', 'Yxyx6KpKRzY', 'aqhREpceEMI', '3WgmLIsXFkI', '57dPVbnRouU', 'YK8QlIT3__M', 'xGSfiZt5cdw',
 # 'GCLHuPBtLdQ', 'Fd4a8ktQURc', 'blTBEqybQmQ', 'vNfCfowr-pQ', 'HriDtn-0Dcw', 'LD-F4RODy-I', '1uQM-TVlaMo', 'LZ7H1X8ar9E',
@@ -54,7 +55,7 @@ sess.mount("https://", forever_adapter)
 
 dep_zip = None
 
-cache_invalidator_string = "                                                                         "
+cache_invalidator_string = "  "
 
 orig_urls_to_node_ids = {}
 
@@ -105,7 +106,7 @@ class WikipediaChef(SushiChef):
 
         channel = self.get_channel(**kwargs)
         add_subpages_from_pretext_toc(
-            channel, DOMAIN + "thinkcspy-3.html"
+            channel, DOMAIN + "frontmatter.html"
         )
 
         # potato_topic = TopicNode(
@@ -246,8 +247,8 @@ def download_book_page(url, thumbnail, title):
         # (<class 'ricecooker.classes.licenses.License'>,), which appears to be the class it is checking for? but isinstance returns false
         # TODO JASON - seems like this assertion needs updating, it complains even if I have this, need to put it in the license itself below
         license_description="GNU Free Documentation License - Version 1.3",
-        license=licenses.SpecialPermissionsLicense(copyright_holder="Brad Miller, Paul Resnick, Lauren Murphy, Jeffrey Elkner, Peter Wentworth, Allen B. Downey, Chris Meyers, and Dario Mitchell.",
-                                                   description="GNU Free Documentation License - Version 1.3")
+        license=licenses.CC_BY_SALicense(copyright_holder="Matthew Boelkins, David Austin, Christina Safranski, Steven Schlicker, Mitchel T. Keller",
+                                                   )
     )
     return html5app
 
@@ -277,7 +278,8 @@ def download_depedency_zip_files(url, thumbnail, title):
     shutil.rmtree(mathjax_dest + "es5")
     shutil.copytree("/home/jason/src/MathJax/es5", mathjax_dest + "/es5")
 
-    source_dir = "/home/jason/src/thinkcspy/output/web/"
+    #source_dir = "/home/jason/src/thinkcspy/output/web/"
+    source_dir = "/home/jason/src/matt-gh-pages-active-calculus-single-mbx/doenet/"
     pretext_dest = destpath + "/localhost:8080/"
     pretext_asset_dirs = ["external", "generated", "knowl", "_static"]
     for asset_dir in pretext_asset_dirs:
