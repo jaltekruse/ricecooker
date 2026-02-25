@@ -31,8 +31,8 @@ from le_utils.constants import file_formats, format_presets
 SOURCE_DOMAIN = "https://runestone.academy/ns/books/published/FOPP-PIE/ThinkLikeComputer.html"
 # SOURCE_ID = "thinkcspi_runestone_academy"  # an alphanumeric ID refering to this channel
 # CHANNEL_TITLE = "How to Think Like a Computer Scientist, Interactive Edition"  # a humand-readbale title
-SOURCE_ID = "thinkcspy_runestone_academy_nov_20c"  # an alphanumeric ID refering to this channel
-CHANNEL_TITLE = "Nov 20th C WIP - How to Think Like a Computer Scientist, Interactive Edition"  # a humand-readbale title
+SOURCE_ID = "thinkcspy_runestone_academy_feb_24_2026"  # an alphanumeric ID refering to this channel
+CHANNEL_TITLE = "Feb 24th 2026 WIP - How to Think Like a Computer Scientist, Interactive Edition"  # a humand-readbale title
 
 # youtube ids {'SGVgAV0v-Ww', 'Yxyx6KpKRzY', 'aqhREpceEMI', '3WgmLIsXFkI', '57dPVbnRouU', 'YK8QlIT3__M', 'xGSfiZt5cdw',
 # 'GCLHuPBtLdQ', 'Fd4a8ktQURc', 'blTBEqybQmQ', 'vNfCfowr-pQ', 'HriDtn-0Dcw', 'LD-F4RODy-I', '1uQM-TVlaMo', 'LZ7H1X8ar9E',
@@ -149,7 +149,7 @@ def add_subpages_from_pretext_toc(channel, list_url):
             #sub_chapter_topic = TopicNode(source_id=sub_chapter.findNext("a").attrs["href"], title=sub_chap_title)
             # chapter_topic.add_child(sub_chapter_topic)
 
-            if True or "2.2" in sub_chap_title or "2.3" in sub_chap_title or "2.4" in sub_chap_title:
+            if "2.2" in sub_chap_title or "2.3" in sub_chap_title or "2.4" in sub_chap_title:
             # if "1." in sub_chap_title or "2." in sub_chap_title or "3." in sub_chap_title:
                 sub_chap_url = DOMAIN + list(sub_chapter.find_all("a", recursive="False"))[0].attrs["href"]
                 if dep_zip is None:
