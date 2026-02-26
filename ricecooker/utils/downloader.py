@@ -218,6 +218,8 @@ def make_request(
                 url,
                 headers=request_headers,
                 stream=True,
+                # TODO Jason Delete and fix certs for downloading assets from doenet.org
+                verify=False,
                 timeout=timeout,
                 *args,
                 **kwargs
@@ -440,11 +442,14 @@ def download_static_assets(  # noqa: C901
                 # TODO: We should probably separate out the download step from the middleware step, so
                 # that middleware can be run regardless of how we get the content.
                 content = open(fullpath, "r", encoding="utf-8").read()
-                new_content = content_middleware(content, url)
-                if new_content != content:
-                    # if the middleware changed the content, update it.
-                    with open(fullpath, "w") as f:
-                        f.write(new_content)
+                # TODO Jason - having trouble with recursion and the middleware attempting to rewrite files that have already been rewritten
+                # Need to do more invesitgating but commenting out theo code blow for a wquick and dirty test
+
+                # new_content = content_middleware(content, url)
+                # if new_content != content:
+                #     # if the middleware changed the content, update it.
+                #     with open(fullpath, "w") as f:
+                #         f.write(new_content)
 
     def js_content_middleware(content, url, **kwargs):
         if js_middleware:
@@ -811,7 +816,7 @@ def archive_page(
             return get_archive_filename(url, destination, page_url, download_root, resource_urls)
 
         # TODO JASON delete
-        if False or skip_static_asset_download:
+        if False and skip_static_asset_download:
             doc = content
             if (not isinstance(doc, BeautifulSoup)):
                 doc = BeautifulSoup(doc, features="lxml", preserve_whitespace_tags=web.PRESERVE_WHITESPACE_TAGS)

@@ -3,6 +3,7 @@ import os
 import re
 import tempfile
 
+import glob 
 import shutil
 
 import le_utils
@@ -28,11 +29,12 @@ from le_utils.constants import file_formats, format_presets
 
 
 # CHANNEL SETTINGS
-SOURCE_DOMAIN = "https://runestone.academy/ns/books/published/FOPP-PIE/ThinkLikeComputer.html"
+SOURCE_DOMAIN = "https://activecalculus.org/single2e/frontmatter.html"
 # SOURCE_ID = "thinkcspi_runestone_academy"  # an alphanumeric ID refering to this channel
 # CHANNEL_TITLE = "How to Think Like a Computer Scientist, Interactive Edition"  # a humand-readbale title
-SOURCE_ID = "thinkcspy_runestone_academy_feb_24_2026"  # an alphanumeric ID refering to this channel
-CHANNEL_TITLE = "Feb 24th 2026 WIP - How to Think Like a Computer Scientist, Interactive Edition"  # a humand-readbale title
+SOURCE_ID = "active_calc_with_doenet_feb_25_2026"  # an alphanumeric ID refering to this channel
+#CHANNEL_TITLE = "Nov 20th C WIP - How to Think Like a Computer Scientist, Interactive Edition"  # a humand-readbale title
+CHANNEL_TITLE = "Feb 25 2026 B WIP - Active Calculus: with Doenet "  # a humand-readbale title
 
 # youtube ids {'SGVgAV0v-Ww', 'Yxyx6KpKRzY', 'aqhREpceEMI', '3WgmLIsXFkI', '57dPVbnRouU', 'YK8QlIT3__M', 'xGSfiZt5cdw',
 # 'GCLHuPBtLdQ', 'Fd4a8ktQURc', 'blTBEqybQmQ', 'vNfCfowr-pQ', 'HriDtn-0Dcw', 'LD-F4RODy-I', '1uQM-TVlaMo', 'LZ7H1X8ar9E',
@@ -54,7 +56,7 @@ sess.mount("https://", forever_adapter)
 
 dep_zip = None
 
-cache_invalidator_string = "                                                                         "
+cache_invalidator_string = "        "
 
 orig_urls_to_node_ids = {}
 
@@ -105,7 +107,7 @@ class WikipediaChef(SushiChef):
 
         channel = self.get_channel(**kwargs)
         add_subpages_from_pretext_toc(
-            channel, DOMAIN + "thinkcspy-3.html"
+            channel, DOMAIN + "frontmatter.html"
         )
 
         # potato_topic = TopicNode(
@@ -185,7 +187,9 @@ def download_book_page(url, thumbnail, title):
     #print("JASON DEBUG - #$%@#!$^#$%^^@#$%&^#$%%@$#%@#%$#@%@#$%@#$%@#$%@#$%@#$%@#$%@#$%#&&^(*(")
     #print(dep_zip_file.preset)
 
-    dep_file_reference = '/content/zipcontent/{}.zip/'.format(dep_zip_file.checksum)
+    # TODO Jason - I bleive I was told to always recreate the HTMLZipFile node, but this makes
+    # me think I'm re-computing the checksum repreatedly
+    dep_file_reference = '/zipcontent/{}.zip/'.format(dep_zip_file.checksum)
     assets_ref = './'
     pie_ref = '../../PIE/'
     for link in local_links:
@@ -211,6 +215,7 @@ def download_book_page(url, thumbnail, title):
     # this is for custom data attributes on some tags that are interpreted as URLs by PreteXt javascript
     new_html = new_html.replace("\"_static", "\"" + dep_file_reference + "./localhost:8080/_static")
     new_html = new_html.replace("\"./knowl", "\"" + dep_file_reference  + "./localhost:8080/knowl")
+    new_html = re.sub(r"(iframe.*src=\")", r"\1" + dep_file_reference, new_html)
 
     # replace other URLs with navigation events to visit other node in the Kolibri tree
     for orig_url in orig_urls_to_node_ids:
@@ -246,10 +251,26 @@ def download_book_page(url, thumbnail, title):
         # (<class 'ricecooker.classes.licenses.License'>,), which appears to be the class it is checking for? but isinstance returns false
         # TODO JASON - seems like this assertion needs updating, it complains even if I have this, need to put it in the license itself below
         license_description="GNU Free Documentation License - Version 1.3",
-        license=licenses.SpecialPermissionsLicense(copyright_holder="Brad Miller, Paul Resnick, Lauren Murphy, Jeffrey Elkner, Peter Wentworth, Allen B. Downey, Chris Meyers, and Dario Mitchell.",
-                                                   description="GNU Free Documentation License - Version 1.3")
+        license=licenses.CC_BY_SALicense(copyright_holder="Matthew Boelkins, David Austin, Christina Safranski, Steven Schlicker, Mitchel T. Keller",
+                                                   )
     )
     return html5app
+
+def replace_strings_in_file(file_path, old_string, new_string):
+    try:
+        with open(file_path, 'r') as file:
+            file_content = file.read()
+
+        updated_content = file_content.replace(old_string, new_string)
+
+        with open(file_path, 'w') as file:
+            file.write(updated_content)
+
+        print(f"Text replacement completed successfully in '{file_path}'.")
+    except FileNotFoundError:
+        print(f"Error: The file '{file_path}' was not found.")
+    except Exception as e:
+        print(f"An error occurred: {e}")
 
 def download_depedency_zip_files(url, thumbnail, title):
 
@@ -277,7 +298,18 @@ def download_depedency_zip_files(url, thumbnail, title):
     shutil.rmtree(mathjax_dest + "es5")
     shutil.copytree("/home/jason/src/MathJax/es5", mathjax_dest + "/es5")
 
-    source_dir = "/home/jason/src/thinkcspy/output/web/"
+    # https://studio.learningequality.org/zipcontent/a7a5a810f1b2f926f6070496ec19d1b6.zip/cdn.jsdelivr.net/npm/mathjax@3
+
+    mathjax_4_font_dest = destpath + "/cdn.jsdelivr.net/npm/"
+    #shutil.rmtree(mathjax_4_font_dest + "@mathjax")
+    #shutil.rmtree(mathjax_4_font_dest + "mathjax@4.1.0")
+    shutil.copytree("/home/jason/src/mathjax-4/node_modules/@mathjax", mathjax_4_font_dest + "@mathkax")
+    shutil.copytree("/home/jason/src/mathjax-4/node_modules/mathjax", mathjax_4_font_dest + "mathjax@4.1.0")
+
+    # https://studio.learningequality.org/zipcontent/504532c3f084544ff5450c2a57ca8816.zip/cdn.jsdelivr.net/npm/mathjax@4.1.0/tex-mml-chtml.js
+
+    #source_dir = "/home/jason/src/thinkcspy/output/web/"
+    source_dir = "/home/jason/src/matt-gh-pages-active-calculus-single-mbx/doenet/"
     pretext_dest = destpath + "/localhost:8080/"
     pretext_asset_dirs = ["external", "generated", "knowl", "_static"]
     for asset_dir in pretext_asset_dirs:
@@ -294,6 +326,28 @@ def download_depedency_zip_files(url, thumbnail, title):
         # so they don't interact with this copy and potential overwrite, but I could be mor thorough checking everything pretext is doing itself
         # with CSS
         shutil.copytree(source_dir + asset_dir, pretext_dest + asset_dir, dirs_exist_ok=True, ignore=shutil.ignore_patterns('theme.css'))
+
+    source_pattern = source_dir + "doe-*"
+    source_pattern_2_2 = source_dir + "doe-int-ex-2-2-*"
+
+    doenet_pages_for_iframes = glob.glob(source_pattern)
+
+    doenet_pages_for_iframes_2_2 = glob.glob(source_pattern_2_2)
+
+    for file_path in doenet_pages_for_iframes_2_2:
+        archive_page(DOMAIN + file_path.split("/")[-1], destpath)
+        shutil.copy(destpath + "/index.html", destpath + "/" + file_path.split("/")[-1])
+
+    # From doenet-standalone
+    # DEFAULT_V4_SRC = "https://cdn.jsdelivr.net/npm/mathjax@4.1.0/tex-mml-chtml.js"
+    replace_strings_in_file(destpath + "/cdn.jsdelivr.net/npm/@doenet/standalone@latest/doenet-standalone.js",
+                            "https://cdn.jsdelivr.net/npm/", "cdn.jsdelivr.net/npm/")
+
+    # for file_path in doenet_pages_for_iframes:
+    #     try:
+    #         shutil.copy(file_path, destpath)
+    #     except IOError as e:
+    #         print(f"Error copying {file_path}: {e}")
 
     # TODO Jason likely bring this back?
     #os.remove(destpath + "/index.html")
@@ -338,7 +392,7 @@ if __name__ == "__main__":
     wikichef = WikipediaChef()
     wikichef.main()
     orig_urls_to_node_ids = dict(map(lambda x: (x.source_id, x.node_id), wikichef.tree.all_nodes))
-    wikichef.main()
+    # wikichef.main()
     # print deduplicated list of youtube video ids
     print(set(youtube_codes))
     print("done")
