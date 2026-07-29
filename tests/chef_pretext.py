@@ -31,8 +31,8 @@ from le_utils.constants import file_formats, format_presets
 SOURCE_DOMAIN = "https://runestone.academy/ns/books/published/FOPP-PIE/ThinkLikeComputer.html"
 # SOURCE_ID = "thinkcspi_runestone_academy"  # an alphanumeric ID refering to this channel
 # CHANNEL_TITLE = "How to Think Like a Computer Scientist, Interactive Edition"  # a humand-readbale title
-SOURCE_ID = "thinkcspy_runestone_academy_feb_24_2026"  # an alphanumeric ID refering to this channel
-CHANNEL_TITLE = "Feb 24th 2026 WIP - How to Think Like a Computer Scientist, Interactive Edition"  # a humand-readbale title
+SOURCE_ID = "thinkcspy_runestone_academy_june_9_2026"  # an alphanumeric ID refering to this channel
+CHANNEL_TITLE = "June 92026 WIP - How to Think Like a Computer Scientist, Interactive Edition"  # a humand-readbale title
 
 # youtube ids {'SGVgAV0v-Ww', 'Yxyx6KpKRzY', 'aqhREpceEMI', '3WgmLIsXFkI', '57dPVbnRouU', 'YK8QlIT3__M', 'xGSfiZt5cdw',
 # 'GCLHuPBtLdQ', 'Fd4a8ktQURc', 'blTBEqybQmQ', 'vNfCfowr-pQ', 'HriDtn-0Dcw', 'LD-F4RODy-I', '1uQM-TVlaMo', 'LZ7H1X8ar9E',
@@ -149,7 +149,7 @@ def add_subpages_from_pretext_toc(channel, list_url):
             #sub_chapter_topic = TopicNode(source_id=sub_chapter.findNext("a").attrs["href"], title=sub_chap_title)
             # chapter_topic.add_child(sub_chapter_topic)
 
-            if "2.2" in sub_chap_title or "2.3" in sub_chap_title or "2.4" in sub_chap_title:
+            if "ecursion" in sub_chap_title or "16." in sub_chap_title or "2.2" in sub_chap_title or "2.3" in sub_chap_title or "2.4" in sub_chap_title or "2.5" in sub_chap_title:
             # if "1." in sub_chap_title or "2." in sub_chap_title or "3." in sub_chap_title:
                 sub_chap_url = DOMAIN + list(sub_chapter.find_all("a", recursive="False"))[0].attrs["href"]
                 if dep_zip is None:
@@ -206,6 +206,9 @@ def download_book_page(url, thumbnail, title):
         #         self.patch_three_js(full_path)
 
     new_html = parser.replace_links(links_to_replace)
+    # for asset_url in re.findall(r"\"knowl([^\"]*)\"", new_html):
+    #     if asset_url == '': continue
+    #     download_file("http://localhost:8080/knowl/" + asset_url, destpath + asset_url)
 
     # TODO Jason - very hack just trying to get pretext working
     # this is for custom data attributes on some tags that are interpreted as URLs by PreteXt javascript
@@ -308,18 +311,6 @@ def download_depedency_zip_files(url, thumbnail, title):
     global dep_zip
     dep_zip = zippath
     return None
-
-def process_wikipedia_page(content, baseurl, destpath, **kwargs):
-
-    page = BeautifulSoup(content, "html.parser")
-
-    for image in page.find_all("img"):
-        relpath, _ = download_file(
-            make_fully_qualified_url(image["src"]), destpath, request_fn=make_request
-        )
-        image["src"] = relpath
-
-    return str(page)
 
 
 if __name__ == "__main__":
