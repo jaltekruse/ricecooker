@@ -150,7 +150,7 @@ class File(object):
             filename = self.get_filename()
         return {
             "size": self.size,
-            "preset": self.get_preset(),
+            "preset": self.get_preset() if self.size < 20000000 else  "html5_dependency",
             "filename": filename,
             "original_filename": self.original_filename,
             "language": self.language,

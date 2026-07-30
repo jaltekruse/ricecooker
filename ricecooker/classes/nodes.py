@@ -907,7 +907,7 @@ class ContentNode(TreeNode):
                     f"No required format preset found out of {self.required_presets}",
                 )
                 self._validate_values(
-                    num_required_presets > 1,
+                    num_required_presets > 2,
                     f"Multiple ({num_required_presets}) required presets found out of {self.required_presets}",
                 )
             # We don't need files if we have questions
