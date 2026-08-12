@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 import os
+from pathlib import Path
 import re
 import tempfile
 
@@ -19,10 +20,12 @@ from ricecooker.config import LOGGER
 from ricecooker.utils.caching import CacheControlAdapter
 from ricecooker.utils.caching import CacheForeverHeuristic
 from ricecooker.utils.caching import FileCache
-from ricecooker.utils.downloader import archive_page
 from ricecooker.utils.html import download_file
-from ricecooker.utils import downloader, web
+from ricecooker.utils import html_writer, web
 
+from ricecooker.utils.pipeline import FilePipeline
+from ricecooker.utils.pipeline.convert import HTML5ConversionHandler
+from ricecooker.utils.pipeline.transfer import read
 from ricecooker.utils.zip import create_predictable_zip
 from le_utils.constants import file_formats, format_presets
 
@@ -32,7 +35,7 @@ SOURCE_DOMAIN = "https://runestone.academy/ns/books/published/FOPP-PIE/ThinkLike
 # SOURCE_ID = "thinkcspi_runestone_academy"  # an alphanumeric ID refering to this channel
 # CHANNEL_TITLE = "How to Think Like a Computer Scientist, Interactive Edition"  # a humand-readbale title
 SOURCE_ID = "thinkcspy_runestone_academy_june_9_2026"  # an alphanumeric ID refering to this channel
-CHANNEL_TITLE = "June 92026 WIP - How to Think Like a Computer Scientist, Interactive Edition"  # a humand-readbale title
+CHANNEL_TITLE = "Aug 7 2026 WIP - How to Think Like a Computer Scientist, Interactive Edition"  # a humand-readbale title
 
 # youtube ids {'SGVgAV0v-Ww', 'Yxyx6KpKRzY', 'aqhREpceEMI', '3WgmLIsXFkI', '57dPVbnRouU', 'YK8QlIT3__M', 'xGSfiZt5cdw',
 # 'GCLHuPBtLdQ', 'Fd4a8ktQURc', 'blTBEqybQmQ', 'vNfCfowr-pQ', 'HriDtn-0Dcw', 'LD-F4RODy-I', '1uQM-TVlaMo', 'LZ7H1X8ar9E',
@@ -167,13 +170,14 @@ def add_subpages_from_pretext_toc(channel, list_url):
 def download_book_page(url, thumbnail, title):
     destpath = tempfile.mkdtemp()
 
-    archive_page(url, destpath, skip_static_asset_download=True)
+    new_file, _ = download_file(url, destpath)
+    #archive_page(url, destpath, skip_static_asset_download=True)
     #archive_page(url, destpath)
 
     # mathjax_dest = destpath + "/cdn.jsdelivr.net/npm/mathjax@3/"
     # shutil.rmtree(mathjax_dest + "es5")
     # shutil.copytree("/home/jason/src/MathJax/es5", mathjax_dest + "/es5")
-    index_path = destpath + "/index.html"
+    index_path = destpath + "/" + new_file
     parser = web.HTMLParser(index_path)
 
     local_links = parser.get_links()
@@ -264,9 +268,33 @@ def download_depedency_zip_files(url, thumbnail, title):
     #archive = downloader.ArchiveDownloader(destpath)
     #archive.get_page(url)
 
-    #download_file(url, destpath)
+    # download_file(url, destpath)
 
-    archive_page(url, destpath)
+    # archive_page(url, destpath)
+    # results = download_file(url, destpath)
+    # processed_zip_path = create_predictable_zip(destpath)
+
+    # it appears this does an undesirable inlining of large files like fonts in base 64
+    ###### tried recently around 4pm aug 11th
+    pipeline = FilePipeline()
+    file_metadata_list = pipeline.execute(url, skip_cache=True)
+    print(file_metadata_list)
+
+    # handler = HTML5ConversionHandler()
+    # new_file_metadata = handler.handle_file(url)
+    ###### END tried recently around 4pm aug 11th
+
+
+    # Tested on Aug 11th around 7pm
+    # with html_writer.HTMLWriter(destpath + "/output.zip") as zipper:
+    #     try:
+    #         zipper.write_url(url, "index.html")
+    #     except Exception as e:
+    #         # Any errors here will just say index.html file does not exist, so
+    #         # print out error for more descriptive debugging
+    #         LOGGER.error(str(e))
+
+    #read(url)
 
     # localref, _ = get_page(
     #     url,
@@ -277,8 +305,14 @@ def download_depedency_zip_files(url, thumbnail, title):
     # )
 
     mathjax_dest = destpath + "/cdn.jsdelivr.net/npm/mathjax@3/"
-    shutil.rmtree(mathjax_dest + "es5")
-    shutil.copytree("/home/jason/src/MathJax/es5", mathjax_dest + "/es5")
+
+    mathjax_dest_full = mathjax_dest + "es5"
+    if Path(mathjax_dest_full).exists():
+        shutil.rmtree(mathjax_dest_full)
+    
+    shutil.copytree("/home/jason/src/MathJax/es5", mathjax_dest_full) 
+    # shutil.rmtree(mathjax_dest + "es5")
+    # shutil.copytree("/home/jason/src/MathJax/es5", mathjax_dest + "/es5")
 
     source_dir = "/home/jason/src/thinkcspy/output/web/"
     pretext_dest = destpath + "/localhost:8080/"
