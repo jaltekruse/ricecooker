@@ -1,4 +1,5 @@
-""" Tests for tree construction """
+"""Tests for tree construction"""
+
 import os
 import tempfile
 import uuid
@@ -18,6 +19,7 @@ from le_utils.constants.labels import resource_type
 from le_utils.constants.labels import subjects
 from le_utils.constants.languages import getlang
 
+from ricecooker import config
 from ricecooker.classes.files import DocumentFile
 from ricecooker.classes.files import HTMLZipFile
 from ricecooker.classes.files import SlideImageFile
@@ -34,13 +36,13 @@ from ricecooker.classes.nodes import RemoteContentNode
 from ricecooker.classes.nodes import SlideshowNode
 from ricecooker.classes.nodes import TopicNode
 from ricecooker.classes.nodes import TreeNode
+from ricecooker.exceptions import FileNotFoundException
 from ricecooker.exceptions import InvalidNodeException
 from ricecooker.managers.tree import ChannelManager
 from ricecooker.managers.tree import InsufficientStorageException
 from ricecooker.utils.jsontrees import build_tree_from_json
 from ricecooker.utils.pipeline import FilePipeline
 from ricecooker.utils.zip import create_predictable_zip
-
 
 """ *********** TOPIC FIXTURES *********** """
 
@@ -167,9 +169,9 @@ def test_nodes_initialized(channel, topic, document):
 
 def test_add_child(tree, topic, document):
     assert tree.children[0] == topic, "Channel should have topic child node"
-    assert (
-        tree.children[0].children[0] == document
-    ), "Topic should have a document child node"
+    assert tree.children[0].children[0] == document, (
+        "Topic should have a document child node"
+    )
 
 
 def test_ids(
@@ -185,24 +187,24 @@ def test_ids(
     topic = tree.children[0]
     document = topic.children[0]
 
-    assert (
-        channel.get_content_id() == channel_content_id
-    ), "Channel content id should be {}".format(channel_content_id)
-    assert (
-        channel.get_node_id() == channel_node_id
-    ), "Channel node id should be {}".format(channel_node_id)
-    assert (
-        topic.get_content_id() == topic_content_id
-    ), "Topic content id should be {}".format(topic_content_id)
+    assert channel.get_content_id() == channel_content_id, (
+        "Channel content id should be {}".format(channel_content_id)
+    )
+    assert channel.get_node_id() == channel_node_id, (
+        "Channel node id should be {}".format(channel_node_id)
+    )
+    assert topic.get_content_id() == topic_content_id, (
+        "Topic content id should be {}".format(topic_content_id)
+    )
     assert topic.get_node_id() == topic_node_id, "Topic node id should be {}".format(
         topic_node_id
     )
-    assert (
-        document.get_content_id() == document_content_id
-    ), "Document content id should be {}".format(document_content_id)
-    assert (
-        document.get_node_id() == document_node_id
-    ), "Document node id should be {}".format(document_node_id)
+    assert document.get_content_id() == document_content_id, (
+        "Document content id should be {}".format(document_content_id)
+    )
+    assert document.get_node_id() == document_node_id, (
+        "Document node id should be {}".format(document_node_id)
+    )
 
 
 def test_add_file(document, document_file):
@@ -214,9 +216,9 @@ def test_add_file(document, document_file):
 def test_thumbnail(topic, document, thumbnail_path):
     assert document.has_thumbnail(), "Document must have a thumbnail"
     assert not topic.has_thumbnail(), "Topic must not have a thumbnail"
-    assert [
-        f for f in document.files if f.path == thumbnail_path
-    ], "Document is missing a thumbnail with path {}".format(thumbnail_path)
+    assert [f for f in document.files if f.path == thumbnail_path], (
+        "Document is missing a thumbnail with path {}".format(thumbnail_path)
+    )
 
 
 def test_count(tree):
@@ -224,29 +226,29 @@ def test_count(tree):
 
 
 def test_get_non_topic_descendants(tree, document):
-    assert tree.get_non_topic_descendants() == [
-        document
-    ], "Channel should only have 1 non-topic descendant"
+    assert tree.get_non_topic_descendants() == [document], (
+        "Channel should only have 1 non-topic descendant"
+    )
 
 
 def test_licenses(channel, topic, document, license_name, copyright_holder):
-    assert isinstance(
-        document.license, License
-    ), "Document should have a license object"
-    assert (
-        document.license.license_id == license_name
-    ), "Document license should have public domain license"
-    assert (
-        document.license.copyright_holder == copyright_holder
-    ), "Document license should have copyright holder set to {}".format(
-        copyright_holder
+    assert isinstance(document.license, License), (
+        "Document should have a license object"
+    )
+    assert document.license.license_id == license_name, (
+        "Document license should have public domain license"
+    )
+    assert document.license.copyright_holder == copyright_holder, (
+        "Document license should have copyright holder set to {}".format(
+            copyright_holder
+        )
     )
     assert not channel.license, "Channel should not have a license"
     assert not topic.license, "Topic should not have a license"
 
 
 def test_validate_topics(tree, invalid_tree):
-    assert tree.validate(), "Valid topic should pass validation"
+    assert tree.validate() is None, "Valid topic should pass validation"
 
     try:
         invalid_tree.validate()
@@ -328,7 +330,7 @@ def test_add_files_with_preset(channel):
     parent_node = build_tree_from_json(channel, [topic_node])
     topic_node = parent_node.children[0]
     html5_node = topic_node.children[0]
-    assert parent_node.validate()
+    parent_node.validate()
     assert parent_node
     assert parent_node.children[0]
     assert topic_node.kind == "topic"
@@ -384,7 +386,7 @@ def test_slideshow_node_via_files(channel):
     assert "slideshow_data" in slideshow_node.extra_fields, "missing slideshow_data key"
     slideshow_node.process_files()
     channel.add_child(slideshow_node)
-    assert channel.validate()
+    channel.validate()
     assert slideshow_node.to_dict()  # not ready yet bcs needs ot be part of tree...
 
 
@@ -422,7 +424,7 @@ def test_slideshow_node_via_add_file(channel):
     assert len(slideshow_node.files) == 3, "missing files"
 
     channel.add_child(slideshow_node)
-    assert channel.validate()
+    channel.validate()
 
 
 """ *********** CUSTOM NAVIGATION CONTENT NODE TESTS *********** """
@@ -460,7 +462,7 @@ def test_custom_navigation_node_via_files(channel):
     ), "missing custom navigation modality"
     custom_navigation_node.process_files()
     channel.add_child(custom_navigation_node)
-    assert channel.validate()
+    channel.validate()
     assert custom_navigation_node.to_dict()
 
 
@@ -497,7 +499,7 @@ def test_custom_navigation_node_via_add_file(channel):
     ), "missing custom navigation modality"
     custom_navigation_node.process_files()
     channel.add_child(custom_navigation_node)
-    assert channel.validate()
+    channel.validate()
     assert custom_navigation_node.to_dict()
 
 
@@ -533,7 +535,7 @@ def test_custom_navigation_channel_node_via_files():
     ), "missing custom navigation modality"
     custom_navigation_channel_node.set_thumbnail(thumbimg1)
     custom_navigation_channel_node.process_files()
-    assert custom_navigation_channel_node.validate()
+    custom_navigation_channel_node.validate()
     assert custom_navigation_channel_node.to_dict()
     assert custom_navigation_channel_node.to_dict()["thumbnail"] == thumbimg1.filename
     assert len(custom_navigation_channel_node.to_dict()["files"]) == 1
@@ -575,7 +577,7 @@ def test_custom_navigation_channel_node_via_add_file():
     ), "missing custom navigation modality"
     custom_navigation_channel_node.set_thumbnail(thumbimg1)
     custom_navigation_channel_node.process_files()
-    assert custom_navigation_channel_node.validate()
+    custom_navigation_channel_node.validate()
     assert custom_navigation_channel_node.to_dict()
     assert custom_navigation_channel_node.to_dict()["thumbnail"] == thumbimg1.filename
     assert len(custom_navigation_channel_node.to_dict()["files"]) == 1
@@ -594,7 +596,7 @@ def test_remote_content_node_with_no_overrides():
     assert remote_content_node
     assert remote_content_node.kind == "remotecontent"
     assert len(remote_content_node.files) == 0
-    assert remote_content_node.validate()
+    remote_content_node.validate()
     output = remote_content_node.to_dict()
     assert output.get("title") is None
     assert output.get("description") is None
@@ -610,7 +612,7 @@ def test_remote_content_node_with_basic_overrides():
     assert remote_content_node
     assert remote_content_node.kind == "remotecontent"
     assert len(remote_content_node.files) == 0
-    assert remote_content_node.validate()
+    remote_content_node.validate()
     output = remote_content_node.to_dict()
     assert output.get("title") == "My Title"
     assert output.get("description") == "My Description"
@@ -625,7 +627,7 @@ def test_remote_content_node_with_provider_override():
     assert remote_content_node
     assert remote_content_node.kind == "remotecontent"
     assert len(remote_content_node.files) == 0
-    assert remote_content_node.validate()
+    remote_content_node.validate()
     output = remote_content_node.to_dict()
     assert output.get("provider") == "Doctor Tibbles"
 
@@ -659,7 +661,7 @@ def test_remote_content_node_with_overridden_thumbnail():
         thumbnail=thumbimg1,
     )
     assert len(remote_content_node.files) == 1
-    assert remote_content_node.validate()
+    remote_content_node.validate()
     remote_content_node.process_files()
     output = remote_content_node.to_dict()
     assert output.get("files")[0]["filename"] == "d7ab03e4263fc374737d96ac2da156c1.jpg"
@@ -674,7 +676,7 @@ def test_remote_content_node_with_overridden_grade_levels():
     )
     assert remote_content_node
     assert remote_content_node.kind == "remotecontent"
-    assert remote_content_node.validate()
+    remote_content_node.validate()
     output = remote_content_node.to_dict()
     assert output.get("grade_levels") == grades
 
@@ -747,6 +749,37 @@ def test_automatic_resource_node_document(document_file):
     assert node.learning_activities == [learning_activities.READ]
 
 
+def test_automatic_resource_node_document_inherits_node_language(document_file):
+    node = ContentNode(
+        "test",
+        "test",
+        licenses.CC_BY,
+        uri=document_file.path,
+        pipeline=FilePipeline(),
+        copyright_holder="Demo Holdings",
+        language="en",
+    )
+    node.process_files()
+    assert all(f.language == "en" for f in node.files)
+
+
+def test_content_node_passes_context_to_pipeline():
+    mock_pipeline = MagicMock()
+    mock_pipeline.execute.return_value = []
+    node = ContentNode(
+        "test",
+        "test",
+        licenses.CC_BY,
+        uri="https://www.youtube.com/watch?v=abcdefghijk",
+        pipeline=mock_pipeline,
+        context={"subtitle_languages": ["en", "es"]},
+    )
+    node._process_uri()
+    mock_pipeline.execute.assert_called_once_with(
+        node.uri, context={"subtitle_languages": ["en", "es"]}, skip_cache=False
+    )
+
+
 def test_automatic_resource_node_epub(epub_file):
     node = ContentNode(
         "test",
@@ -790,13 +823,13 @@ def _assert_metadata_equal(expected, actual):
     assert set(actual.keys()) == set(expected.keys()), "Metadata keys do not match"
     for field, value in expected.items():
         if isinstance(value, list):
-            assert set(actual[field]) == set(
-                value
-            ), f"Metadata for {field} does not match"
+            assert set(actual[field]) == set(value), (
+                f"Metadata for {field} does not match"
+            )
         elif field == "license":
-            assert (
-                actual[field].license_id == value
-            ), f"Metadata for {field} does not match"
+            assert actual[field].license_id == value, (
+                f"Metadata for {field} does not match"
+            )
         else:
             assert actual[field] == value, f"Metadata for {field} does not match"
 
@@ -1025,10 +1058,10 @@ def test_validate_node_sets_error_attribute(channel):
     with patch("ricecooker.config.STRICT", False):
         result = manager.validate_node(mock_node)
 
-    # Check that _error was set and validate returned True
+    # Check that _error was set and validate_node returned None
     assert hasattr(mock_node, "_error")
     assert mock_node._error == "Test validation error"
-    assert result is True
+    assert result is None
 
 
 def test_process_node_handles_exceptions(channel):
@@ -1199,15 +1232,33 @@ def test_file_upload_insufficient_storage(channel):
     mock_response = MagicMock()
     mock_response.status_code = 412
 
-    with patch("builtins.open", mocked_open), patch(
-        "ricecooker.config.get_storage_path", return_value="/tmp/test_file.mp4"
-    ), patch("ricecooker.config.SESSION.post", return_value=mock_response):
-
+    with (
+        patch("builtins.open", mocked_open),
+        patch("ricecooker.config.get_storage_path", return_value="/tmp/test_file.mp4"),
+        patch("ricecooker.config.os.path.isfile", return_value=True),
+        patch("ricecooker.config.SESSION.post", return_value=mock_response),
+    ):
         # Check that InsufficientStorageException is raised
         with pytest.raises(
             InsufficientStorageException, match="You have run out of storage space."
         ):
             manager.do_file_upload(filename)
+
+
+def test_file_upload_missing_storage_raises_descriptive_error(channel):
+    """do_file_upload reports a cache/storage mismatch instead of a bare FileNotFoundError."""
+    manager = ChannelManager(channel)
+
+    filename = "0123456789abcdef0123456789abcdef.mp4"
+    file_data = MagicMock()
+    file_data.skip_upload = False
+    manager.file_map = {filename: file_data}
+
+    storage_path = config.get_storage_path(filename)
+    assert not os.path.isfile(storage_path)
+    with pytest.raises(FileNotFoundException) as exc_info:
+        manager.do_file_upload(filename)
+    assert storage_path in str(exc_info.value)
 
 
 def test_add_nodes_checks_both_failed_files_and_validity(channel):
@@ -1270,3 +1321,108 @@ def test_add_nodes_checks_both_failed_files_and_validity(channel):
 
 
 # End generated tests
+
+
+""" *********** NODE COPY / DEDUP TESTS (issue #354) *********** """
+
+
+def _place_under_two_topics(channel, node):
+    """Add ``node`` under two sibling topics of ``channel``; return the topics."""
+    t1, t2 = TopicNode("t1", "T1"), TopicNode("t2", "T2")
+    channel.add_child(t1)
+    channel.add_child(t2)
+    t1.add_child(node)
+    t2.add_child(node)
+    return t1, t2
+
+
+def test_copy_resets_ids_and_parent(channel, topic, document):
+    channel.add_child(topic)
+    topic.add_child(document)
+    document.get_node_id()  # materialize + cache node_id/content_id on the original
+    clone = document.copy()
+    assert clone is not document
+    assert clone.parent is None
+    assert clone.node_id is None
+    assert clone.content_id is None
+    assert clone.source_id == document.source_id
+
+
+def test_copy_shares_file_objects(document):
+    clone = document.copy()
+    assert clone.files is not document.files  # new list container
+    assert set(map(id, clone.files)) == set(
+        map(id, document.files)
+    )  # same File objects
+    assert (
+        clone.thumbnail is document.thumbnail
+    )  # thumbnail object shared too (decision #1)
+
+
+def test_copy_clones_children_recursively(topic, document):
+    topic.add_child(document)
+    clone = topic.copy()
+    assert clone.children[0] is not document
+    assert clone.children[0].parent is clone
+    assert clone.children[0].source_id == document.source_id
+
+
+def test_dedup_clones_cross_parent_reuse(channel, document):
+    t1, t2 = _place_under_two_topics(channel, document)  # same object, two parents
+    ChannelManager(channel).deduplicate_shared_nodes()
+    placed1, placed2 = t1.children[0], t2.children[0]
+    assert placed1 is not placed2
+    assert (
+        placed1.parent is t1 and placed2.parent is t2
+    )  # kept placement's parent repaired (construction left it pointing at t2)
+    assert placed1.get_content_id() == placed2.get_content_id()  # shared content_id
+    assert placed1.get_node_id() != placed2.get_node_id()  # distinct node_id
+
+
+def test_dedup_shares_file_objects(channel, document):
+    t1, t2 = _place_under_two_topics(channel, document)
+    ChannelManager(channel).deduplicate_shared_nodes()
+    original_file_ids = set(map(id, t1.children[0].files))
+    assert set(map(id, t2.children[0].files)) == original_file_ids  # same File objects
+
+
+def test_dedup_clones_shared_subtree(channel, document):
+    shared = TopicNode("shared", "Shared")
+    shared.add_child(document)
+    t1, t2 = _place_under_two_topics(channel, shared)  # same subtree, two parents
+    ChannelManager(channel).deduplicate_shared_nodes()
+    s1, s2 = t1.children[0], t2.children[0]
+    assert s1 is not s2
+    assert s1.children[0] is not s2.children[0]  # descendants cloned too
+    assert s1.children[0].get_node_id() != s2.children[0].get_node_id()
+    assert s1.children[0].get_content_id() == s2.children[0].get_content_id()
+
+
+def test_dedup_no_spurious_clone(channel, document):
+    t1 = TopicNode("t1", "T1")
+    channel.add_child(t1)
+    t1.add_child(document)
+    original = t1.children[0]
+    ChannelManager(channel).deduplicate_shared_nodes()
+    assert t1.children[0] is original  # untouched when not reused
+
+
+def test_dedup_preserves_same_parent_error(channel, document):
+    t1 = TopicNode("t1", "T1")
+    channel.add_child(t1)
+    t1.add_child(document)
+    t1.add_child(document)  # same object twice under ONE parent
+    manager = ChannelManager(channel)
+    manager.deduplicate_shared_nodes()
+    assert len(t1.children) == 2 and t1.children[0] is t1.children[1]  # not cloned
+    with patch("ricecooker.config.STRICT", True):
+        with pytest.raises(InvalidNodeException):
+            manager.validate()
+
+
+def test_create_initial_tree_deduplicates_reused_node(channel, document):
+    from ricecooker.commands import create_initial_tree
+
+    t1, t2 = _place_under_two_topics(channel, document)
+    create_initial_tree(channel)
+    assert t1.children[0].get_node_id() != t2.children[0].get_node_id()

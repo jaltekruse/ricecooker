@@ -1,12 +1,16 @@
 # Node models to represent channel's tree
+import copy
 import json
 import re
 import uuid
 
+from le_utils.constants import completion_criteria
 from le_utils.constants import content_kinds
 from le_utils.constants import exercises
 from le_utils.constants import format_presets
 from le_utils.constants import languages
+from le_utils.constants import mastery_criteria
+from le_utils.constants import modalities
 from le_utils.constants import roles
 from le_utils.constants.labels import accessibility_categories
 from le_utils.constants.labels import learning_activities
@@ -15,19 +19,24 @@ from le_utils.constants.labels import needs
 from le_utils.constants.labels import resource_type
 from le_utils.constants.labels import subjects
 
+from ricecooker.utils.pipeline.exceptions import ExpectedFileException
+from ricecooker.utils.pipeline.exceptions import InvalidFileException
+
 from .. import __version__
 from .. import config
 from ..exceptions import InvalidNodeException
-from ..utils.utils import is_valid_uuid_string
+from ..utils.validators import is_valid_uuid_string
+from .curriculum import LearningObjective
 from .files import ExtractedEPubThumbnailFile
 from .files import ExtractedHTMLZipThumbnailFile
+from .files import ExtractedKPUBThumbnailFile
 from .files import ExtractedPdfThumbnailFile
 from .files import File
 from .files import SubtitleFile
 from .files import YouTubeSubtitleFile
 from .licenses import License
-from ricecooker.utils.pipeline.exceptions import ExpectedFileException
-from ricecooker.utils.pipeline.exceptions import InvalidFileException
+from .questions import VARIANT_A
+from .questions import VARIANT_B
 
 MASTERY_MODELS = [id for id, name in exercises.MASTERY_MODELS]
 ROLES = [id for id, name in roles.choices]
@@ -63,13 +72,47 @@ inheritable_metadata_label_fields = [
 
 
 class Node(object):
-    """Node: model to represent all nodes in the tree"""
+    """Base model representing all nodes in the content tree.
+
+    This is the base class for all node types including channels, topics, and content.
+
+    Attributes:
+        source_id (str): unique identifier for the content from the source
+        title (str): title of the content
+        author (str): who created the content (optional)
+        aggregator (str): website or org hosting the content collection but not
+            necessarily the creator or copyright holder (optional)
+        provider (str): organization that commissioned or is distributing the content (optional)
+        copyright_holder (str): holder of the content's copyright (optional)
+        license (str or License): content's license (optional for some node types)
+        license_description (str): additional license description (optional)
+        tags ([str]): list of tags for the content (optional)
+        domain_ns (str): domain namespace, typically the source domain (optional)
+        grade_levels ([str]): target grade levels from le_utils.constants.labels.levels (optional)
+        resource_types ([str]): resource types from le_utils.constants.labels.resource_type (optional)
+        learning_activities ([str]): learning activities from le_utils.constants.labels.learning_activities (optional)
+        accessibility_labels ([str]): accessibility labels from le_utils.constants.labels.accessibility_categories (optional)
+        categories ([str]): subject categories from le_utils.constants.labels.subjects (optional)
+        learner_needs ([str]): learner needs from le_utils.constants.labels.needs (optional)
+        role (str): roles.LEARNER or roles.COACH for teacher-facing materials (default roles.LEARNER)
+        language (str or Language): language code or Language object (optional)
+        description (str): description of the content (optional)
+        thumbnail (str or ThumbnailFile): local path, url, or ThumbnailFile for thumbnail (optional)
+        files ([File]): list of File objects for the node (optional)
+        derive_thumbnail (bool): whether to auto-generate thumbnail from content (default False)
+        node_modifications (dict): modifications passed in by CSV import (optional)
+        extra_fields (dict): additional data needed for the node (optional)
+        suggested_duration (int): suggested duration in seconds (optional)
+    """
 
     kind = None
     license = None
     language = None
-    kind = None
     valid = False
+    # Nodes with questions (ExerciseNode, UnitNode) set this True.
+    # This gates Node._validate() to allow a non-empty `questions` list,
+    # which TreeNode.to_dict() serializes for the Studio API.
+    _allows_questions = False
 
     def __init__(
         self,
@@ -198,6 +241,22 @@ class Node(object):
         node.parent = self
         self.children += [node]
 
+    def copy(self, parent=None):
+        """Return a recursive clone for placing this node under ``parent``.
+
+        Resets node_id/content_id so each placement derives a distinct node_id
+        from its own parent chain, while keeping source_id (and thus content_id)
+        identical. File objects are shared, not copied.
+        """
+        clone = copy.copy(self)
+        clone.parent = parent
+        clone.node_id = None
+        clone.content_id = None
+        clone.descendants = []
+        clone.files = list(self.files)
+        clone.children = [child.copy(parent=clone) for child in self.children]
+        return clone
+
     def add_file(self, file_to_add):
         """add_file: Add to node's associated files
         Args: file_to_add (File): file model to add to node
@@ -205,9 +264,9 @@ class Node(object):
         """
         from .files import File
 
-        assert isinstance(
-            file_to_add, File
-        ), "Files being added must be instances of a subclass of File class"
+        assert isinstance(file_to_add, File), (
+            "Files being added must be instances of a subclass of File class"
+        )
         file_to_add.node = self
         if file_to_add not in self.files:
             self.files.append(file_to_add)
@@ -389,10 +448,7 @@ class Node(object):
         self.license = license
 
     def _validate(self):  # noqa: C901
-        """validate: Makes sure node is valid
-        Args: None
-        Returns: boolean indicating if node is valid
-        """
+        """Validate the node. Raises InvalidNodeException on failure; returns None."""
         self._validate_values(self.source_id is None, "Must have a source_id")
 
         if self.__class__.kind is not None:
@@ -400,9 +456,10 @@ class Node(object):
                 self.kind != self.__class__.kind,
                 f"{self.__class__.__name__} must have kind {self.__class__.kind}",
             )
-            if self.kind != content_kinds.EXERCISE:
+            if not self._allows_questions:
                 self._validate_values(
-                    bool(self.questions), f"{self.kind} should not have questions"
+                    bool(self.questions),
+                    f"{self.__class__.__name__} should not have questions",
                 )
 
         self._validate_values(not isinstance(self.title, str), "Title is not a string")
@@ -522,12 +579,10 @@ class Node(object):
                     f"Learner needs must be one of the following: {needs.NEEDSLIST}",
                 )
 
-        return True
-
     def validate(self):
         self.valid = False
-        self.valid = self._validate()
-        return self.valid
+        self._validate()
+        self.valid = True
 
     def get_metadata_dict(self, metadata: dict[str, any]) -> dict[str, any]:
         """
@@ -559,17 +614,15 @@ class Node(object):
 
 
 class ChannelNode(Node):
-    """Model representing the channel you are creating
+    """Model representing the channel being created.
 
-    Used to store metadata on channel that is being created
+    The root node of a content tree. Requires a source_domain and language.
 
     Attributes:
-        source_id (str): channel's unique id
-        source_domain (str): who is providing the content (e.g. learningequality.org)
-        title (str): name of channel
-        description (str): description of the channel (optional)
-        thumbnail (str): file path or url of channel's thumbnail (optional)
-        files ([<File>]): list of file objects for node (optional)
+        source_domain (str): domain of the content provider (e.g. learningequality.org)
+        tagline (str): short tagline for the channel (optional)
+
+    See Node for inherited attributes.
     """
 
     kind = "Channel"
@@ -630,35 +683,21 @@ class ChannelNode(Node):
         }
 
     def _validate(self):
-        """validate: Makes sure channel is valid
-        Args: None
-        Returns: boolean indicating if channel is valid
-        """
+        """Validate the channel. Raises InvalidNodeException on failure; returns None."""
         self._validate_values(
             not isinstance(self.source_domain, str), "Channel domain must be a string"
         )
         self._validate_values(self.language is None, "Channel must have a language")
-        return super(ChannelNode, self)._validate()
+        super(ChannelNode, self)._validate()
 
 
 class TreeNode(Node):
-    """Model representing the content nodes in the channel's tree
+    """Model representing nodes in the channel's content tree.
 
-    Base model for different content node kinds (topic, video, exercise, etc.)
+    Base model for topic and content nodes. Adds tree navigation methods
+    and node/content ID generation based on parent relationships.
 
-    Attributes:
-        source_id (str): content's original id
-        title (str): content's title
-        license (str or <License>): content's license
-        description (str): description of content (optional)
-        author (str): who created the content (optional)
-        aggregator (str): website or org hosting the content collection but not necessarily the creator or copyright holder (optional)
-        provider (str): organization that commissioned or is distributing the content (optional)
-        thumbnail (str): local path or url to thumbnail image (optional)
-        files ([<File>]): list of file objects for node (optional)
-        tags ([str]): list of tags for node (optional)
-        extra_fields (dict): any additional data needed for node (optional)
-        domain_ns (str): who is providing the content (e.g. learningequality.org) (optional)
+    See Node for inherited attributes.
     """
 
     def get_domain_namespace(self):
@@ -672,9 +711,9 @@ class TreeNode(Node):
         return self.content_id
 
     def get_node_id(self):
-        assert (
-            self.parent
-        ), "Parent not found: node id must be calculated based on parent"
+        assert self.parent, (
+            "Parent not found: node id must be calculated based on parent"
+        )
         if not self.node_id:
             self.node_id = uuid.uuid5(
                 self.parent.get_node_id(), self.get_content_id().hex
@@ -769,16 +808,12 @@ class TreeNode(Node):
 
 
 class TopicNode(TreeNode):
-    """Model representing channel topics
+    """Model representing topic nodes for organizing channel content.
 
-    Topic nodes are used to add organization to the channel's content
+    Topic nodes create the folder structure of a channel. When derive_thumbnail
+    is True, generates a tiled thumbnail from descendant content nodes.
 
-    Attributes:
-        source_id (str): content's original id
-        title (str): content's title
-        description (str): description of content (optional)
-        thumbnail (str): local path or url to thumbnail image (optional)
-        derive_thumbnail (bool): set to generate tiled thumbnail from children (optional)
+    See TreeNode and Node for inherited attributes.
     """
 
     kind = content_kinds.TOPIC
@@ -793,33 +828,28 @@ class TopicNode(TreeNode):
 
 
 class ContentNode(TreeNode):
-    """Model representing the content nodes in the channel's tree
+    """Model representing content nodes (non-topic leaf nodes) in the channel's tree.
 
-    Base model for different content node kinds (topic, video, exercise, etc.)
+    Base model for different content kinds (video, audio, document, exercise, etc.).
+    ContentNodes require a license.
 
     Attributes:
-        source_id (str): content's original id
-        title (str): content's title
-        license (str or <License>): content's license
-        description (str): description of content (optional)
-        author (str): who created the content (optional)
-        aggregator (str): website or org hosting the content collection but not necessarily the creator or copyright holder (optional)
-        provider (str): organization that commissioned or is distributing the content (optional)
-        role (str): set to roles.COACH for teacher-facing materials (default roles.LEARNER)
-        thumbnail (str): local path or url to thumbnail image (optional)
-        derive_thumbnail (bool): set to generate thumbnail from content (optional)
-        files ([<File>]): list of file objects for node (optional)
-        extra_fields (dict): any additional data needed for node (optional)
-        domain_ns (str): who is providing the content (e.g. learningequality.org) (optional)
-        uri (str): A URI for the main file for this content node
-        pipeline (FilePipeline): A FilePipeline instance for handling uri processing
+        uri (str): URI for the main file for this content node (optional)
+        pipeline (FilePipeline): FilePipeline instance for handling uri processing (optional)
+        context (dict): extra context passed to the pipeline when processing uri, e.g.
+            {"subtitle_languages": ["en", "es"]} to also fetch YouTube subtitles (optional)
+
+    See TreeNode and Node for inherited attributes.
     """
 
     required_presets = tuple()
 
-    def __init__(self, source_id, title, license, uri=None, pipeline=None, **kwargs):
+    def __init__(
+        self, source_id, title, license, uri=None, pipeline=None, context=None, **kwargs
+    ):
         self.uri = uri
         self._pipeline = pipeline
+        self.context = context or {}
         # Flag here to say that files haven't been processed.
         # Until files have been processed we can't be sure that the files are actually valid
         # for example, once we download a file we may discover it doesn't exist, that it's
@@ -834,9 +864,12 @@ class ContentNode(TreeNode):
         return self._pipeline
 
     def __str__(self):
-        metadata = "{0} {1}".format(
-            len(self.files), "file" if len(self.files) == 1 else "files"
-        )
+        if len(self.files) == 0 and self.uri:
+            metadata = "uri: {}".format(self.uri)
+        else:
+            metadata = "{0} {1}".format(
+                len(self.files), "file" if len(self.files) == 1 else "files"
+            )
         return "{title} ({kind}): {metadata}".format(
             title=self.title, kind=self.__class__.__name__, metadata=metadata
         )
@@ -852,10 +885,7 @@ class ContentNode(TreeNode):
             )
 
     def _validate(self):
-        """validate: Makes sure content node is valid
-        Args: None
-        Returns: boolean indicating if content node is valid
-        """
+        """Validate the content node. Raises InvalidNodeException on failure; returns None."""
         self._validate_values(self.license is None, "ContentNode must have a license")
         if self._files_processed:
             self._validate_values(self.kind is None, "No kind has been set")
@@ -893,12 +923,12 @@ class ContentNode(TreeNode):
                 self._validate_values(not has_default_file, "No default file")
         if self.uri:
             self._validate_uri()
-        return super(ContentNode, self)._validate()
+        super(ContentNode, self)._validate()
 
     def _process_uri(self):
         try:
             file_metadata_list = self.pipeline.execute(
-                self.uri, skip_cache=config.UPDATE
+                self.uri, context=self.context, skip_cache=config.UPDATE
             )
         except (InvalidFileException, ExpectedFileException) as e:
             config.LOGGER.error(f"Error processing path: {self.uri} with error: {e}")
@@ -910,6 +940,9 @@ class ContentNode(TreeNode):
                 content_metadata.update(metadata_dict.pop("content_node_metadata"))
             # Remove path from metadata_dict as it is not needed for the File object
             metadata_dict.pop("path", None)
+            # Inherit the node's language unless the pipeline inferred one of its own
+            # (e.g. a subtitle language extracted from the file itself).
+            metadata_dict.setdefault("language", self.language)
             file_obj = File(**metadata_dict)
             self.add_file(file_obj)
         for key, value in content_metadata.items():
@@ -937,37 +970,21 @@ class ContentNode(TreeNode):
         Args: None
         Returns: dict of channel data
         """
-        return {
-            "title": self.node_modifications.get("New Title") or self.title,
-            "language": self.language,
-            "description": self.node_modifications.get("New Description")
-            or self.description,
-            "node_id": self.get_node_id().hex,
-            "content_id": self.get_content_id().hex,
-            "source_domain": self.domain_ns.hex,
-            "source_id": self.source_id,
-            "author": self.author,
-            "aggregator": self.aggregator,
-            "provider": self.provider,
-            "files": [
-                f.to_dict() for f in filter(lambda x: x and x.filename, self.files)
-            ],  # Filter out failed downloads
-            "tags": self.node_modifications.get("New Tags") or self.tags,
-            "kind": self.kind,
-            "license": self.license.license_id,
-            "license_description": self.license.description,
-            "copyright_holder": self.license.copyright_holder,
-            "questions": [question.to_dict() for question in self.questions],
-            "extra_fields": json.dumps(self.extra_fields),
-            "role": self.role,
-            "suggested_duration": self.suggested_duration,
-            "grade_levels": self.grade_levels,
-            "resource_types": self.resource_types,
-            "learning_activities": self.learning_activities,
-            "accessibility_labels": self.accessibility_labels,
-            "categories": self.categories,
-            "learner_needs": self.learner_needs,
-        }
+        # Get base dict from TreeNode
+        data = super(ContentNode, self).to_dict()
+
+        # Override/add ContentNode-specific fields
+        data.update(
+            {
+                "license": self.license.license_id,
+                "license_description": self.license.description,
+                "copyright_holder": self.license.copyright_holder,
+                "questions": [question.to_dict() for question in self.questions],
+                "suggested_duration": self.suggested_duration,
+            }
+        )
+
+        return data
 
     def set_metadata_from_ancestors(self):
         metadata = self.gather_ancestor_metadata()
@@ -981,28 +998,18 @@ class VideoNode(ContentNode):
     Videos must be mp4 or webm format
 
     Attributes:
-        source_id (str): content's original id
-        title (str): content's title
-        license (str or <License>): content's license
-        author (str): who created the content (optional)
-        aggregator (str): website or org hosting the content collection but not necessarily the creator or copyright holder (optional)
-        provider (str): organization that commissioned or is distributing the content (optional)
-        description (str): description of content (optional)
         derive_thumbnail (bool): set to generate thumbnail from video (optional)
-        thumbnail (str): local path or url to thumbnail image (optional)
-        extra_fields (dict): any additional data needed for node (optional)
-        domain_ns (str): who is providing the content (e.g. learningequality.org) (optional)
-        files ([<File>]): list of file objects for node (optional)
+
+    See ContentNode for inherited attributes.
     """
 
     kind = content_kinds.VIDEO
     required_presets = (format_presets.VIDEO_HIGH_RES, format_presets.VIDEO_LOW_RES)
 
-    def __init__(self, source_id, title, license, **kwargs):
-        super(VideoNode, self).__init__(source_id, title, license, **kwargs)
-
     def generate_thumbnail(self):
-        from .files import VideoFile, WebVideoFile, ExtractedVideoThumbnailFile
+        from .files import ExtractedVideoThumbnailFile
+        from .files import VideoFile
+        from .files import WebVideoFile
 
         video_files = [
             f
@@ -1017,10 +1024,7 @@ class VideoNode(ContentNode):
         return None
 
     def _validate(self):
-        """validate: Makes sure video is valid
-        Args: None
-        Returns: boolean indicating if video is valid
-        """
+        """Validate the video. Raises InvalidNodeException on failure; returns None."""
 
         # Ensure that there is only one subtitle file per language code
         new_files = []
@@ -1042,7 +1046,7 @@ class VideoNode(ContentNode):
             else:
                 new_files.append(file)
         self.files = new_files
-        return super(VideoNode, self)._validate()
+        super(VideoNode, self)._validate()
 
 
 class AudioNode(ContentNode):
@@ -1050,19 +1054,7 @@ class AudioNode(ContentNode):
 
     Audio must be in mp3 format
 
-    Attributes:
-        source_id (str): content's original id
-        title (str): content's title
-        license (str or <License>): content's license
-        author (str): who created the content (optional)
-        aggregator (str): website or org hosting the content collection but not necessarily the creator or copyright holder (optional)
-        provider (str): organization that commissioned or is distributing the content (optional)
-        description (str): description of content (optional)
-        thumbnail (str): local path or url to thumbnail image (optional)
-        derive_thumbnail (bool): set to generate waveform thumbnail (optional)
-        extra_fields (dict): any additional data needed for node (optional)
-        domain_ns (str): who is providing the content (e.g. learningequality.org) (optional)
-        files ([<File>]): list of file objects for node (optional)
+    See ContentNode for inherited attributes.
     """
 
     kind = content_kinds.AUDIO
@@ -1072,21 +1064,12 @@ class AudioNode(ContentNode):
 class DocumentNode(ContentNode):
     """Model representing documents in channel
 
-    Documents must be in PDF or ePub format
+    Documents must be in PDF, ePub, Bloom, or KPUB format
 
     Attributes:
-        source_id (str): content's original id
-        title (str): content's title
-        license (str or <License>): content's license
-        author (str): who created the content (optional)
-        aggregator (str): website or org hosting the content collection but not necessarily the creator or copyright holder (optional)
-        provider (str): organization that commissioned or is distributing the content (optional)
-        description (str): description of content (optional)
-        thumbnail (str): local path or url to thumbnail image (optional)
         derive_thumbnail (bool): automatically generate thumbnail (optional)
-        extra_fields (dict): any additional data needed for node (optional)
-        domain_ns (str): who is providing the content (e.g. learningequality.org) (optional)
-        files ([<File>]): list of file objects for node (optional)
+
+    See ContentNode for inherited attributes.
     """
 
     kind = content_kinds.DOCUMENT
@@ -1094,11 +1077,15 @@ class DocumentNode(ContentNode):
         format_presets.DOCUMENT,
         format_presets.EPUB,
         format_presets.BLOOMPUB,
+        format_presets.KPUB_ZIP,
     )
 
     def generate_thumbnail(self):
         pdf_files = [f for f in self.files if f.get_preset() == format_presets.DOCUMENT]
         epub_files = [f for f in self.files if f.get_preset() == format_presets.EPUB]
+        kpub_files = [
+            f for f in self.files if f.get_preset() == format_presets.KPUB_ZIP
+        ]
         if pdf_files:
             pdf_file = pdf_files[0]
             if pdf_file.filename and not pdf_file.error:
@@ -1109,6 +1096,11 @@ class DocumentNode(ContentNode):
             if epub_file.filename and not epub_file.error:
                 storage_path = config.get_storage_path(epub_file.filename)
                 return ExtractedEPubThumbnailFile(storage_path)
+        elif kpub_files:
+            kpub_file = kpub_files[0]
+            if kpub_file.filename and not kpub_file.error:
+                storage_path = config.get_storage_path(kpub_file.filename)
+                return ExtractedKPUBThumbnailFile(storage_path)
         return None
 
 
@@ -1128,18 +1120,10 @@ class HTML5AppNode(ContentNode):
     All links (e.g. href and src) must be relative URLs, pointing to other files in the zip.
 
     Attributes:
-        source_id (str): content's original id
-        title (str): content's title
-        license (str or <License>): content's license
-        author (str): who created the content (optional)
-        aggregator (str): website or org hosting the content collection but not necessarily the creator or copyright holder (optional)
-        provider (str): organization that commissioned or is distributing the content (optional)
-        description (str): description of content (optional)
-        thumbnail (str): local path or url to thumbnail image (optional)
+        entrypoint (str): custom entry point file (optional, defaults to index.html)
         derive_thumbnail (bool): generate thumbnail from largest image inside zip (optional)
-        extra_fields (dict): any additional data needed for node (optional)
-        domain_ns (str): who is providing the content (e.g. learningequality.org) (optional)
-        files ([<File>]): list of file objects for node (optional)
+
+    See ContentNode for inherited attributes.
     """
 
     kind = content_kinds.HTML5
@@ -1150,7 +1134,6 @@ class HTML5AppNode(ContentNode):
         super().__init__(*args, **kwargs)
 
     def generate_thumbnail(self):
-
         html5_files = [
             f for f in self.files if f.get_preset() == format_presets.HTML5_ZIP
         ]
@@ -1168,18 +1151,7 @@ class H5PAppNode(ContentNode):
 
     The .h5p file is self-contained and inlcuding media and javascript libs.
 
-    Attributes:
-        source_id (str): content's original id
-        title (str): content's title
-        license (str or <License>): content's license
-        author (str): who created the content (optional)
-        aggregator (str): website or org hosting the content collection but not necessarily the creator or copyright holder (optional)
-        provider (str): organization that commissioned or is distributing the content (optional)
-        description (str): description of content (optional)
-        thumbnail (str): local path or url to thumbnail image (optional)
-        extra_fields (dict): any additional data needed for node (optional)
-        domain_ns (str): who is providing the content (e.g. learningequality.org) (optional)
-        files ([<File>]): list of file objects for node (optional)
+    See ContentNode for inherited attributes.
     """
 
     kind = content_kinds.H5P
@@ -1193,25 +1165,16 @@ class ExerciseNode(ContentNode):
     understanding of the content
 
     Attributes:
-        source_id (str): content's original id
-        title (str): content's title
-        license (str or <License>): content's license
-        author (str): who created the content (optional)
-        aggregator (str): website or org hosting the content collection but not necessarily the creator or copyright holder (optional)
-        provider (str): organization that commissioned or is distributing the content (optional)
-        description (str): description of content (optional)
-        exercise_data ({mastery_model:str, randomize:bool, m:int, n:int}): data on mastery requirements (optional)
-        thumbnail (str): local path or url to thumbnail image (optional)
-        extra_fields (dict): any additional data needed for node (optional)
-        domain_ns (str): who is providing the content (e.g. learningequality.org) (optional)
         questions ([<Question>]): list of question objects for node (optional)
+        exercise_data ({mastery_model:str, randomize:bool, m:int, n:int}): data on mastery requirements (optional)
+
+    See ContentNode for inherited attributes.
     """
 
     kind = content_kinds.EXERCISE
+    _allows_questions = True
 
-    def __init__(
-        self, source_id, title, license, questions=None, exercise_data=None, **kwargs
-    ):
+    def __init__(self, *args, questions=None, exercise_data=None, **kwargs):
         self.questions = questions or []
 
         # Set mastery model defaults if none provided
@@ -1227,9 +1190,7 @@ class ExerciseNode(ContentNode):
             }
         )
 
-        super(ExerciseNode, self).__init__(
-            source_id, title, license, extra_fields=exercise_data, **kwargs
-        )
+        super(ExerciseNode, self).__init__(*args, extra_fields=exercise_data, **kwargs)
 
     def __str__(self):
         metadata = "{0} {1}".format(
@@ -1295,19 +1256,14 @@ class ExerciseNode(ContentNode):
         self.extra_fields.update({"n": n_value})
 
     def _validate(self):
-        """validate: Makes sure exercise is valid
-        Args: None
-        Returns: boolean indicating if exercise is valid
-        """
+        """Validate the exercise. Raises InvalidNodeException on failure; returns None."""
 
         # Check if questions are correct
         self._validate_values(
             not self.questions, "Exercise does not have any questions"
         )
-        self._validate_values(
-            any(not q.validate() for q in self.questions),
-            "Exercise has invalid question",
-        )
+        for q in self.questions:
+            q.validate()
         self._validate_values(
             self.extra_fields["mastery_model"] not in MASTERY_MODELS,
             "Unrecognized mastery model {}".format(self.extra_fields["mastery_model"]),
@@ -1336,7 +1292,7 @@ class ExerciseNode(ContentNode):
 
         self.process_exercise_data()
 
-        return super(ExerciseNode, self)._validate()
+        super(ExerciseNode, self)._validate()
 
     def truncate_fields(self):
         for q in self.questions:
@@ -1352,22 +1308,15 @@ class SlideshowNode(ContentNode):
     Slides are shown in a specified sequential order.
 
     Attributes:
-        source_id (str): content's original id
-        title (str): content's title
-        license (str or <License>): content's license
-        author (str): who created the content (optional)
-        aggregator (str): website or org hosting the content collection but not necessarily the creator or copyright holder (optional)
-        provider (str): organization that commissioned or is distributing the content (optional)
-        description (str): description of content (optional)
+        slideshow_data (list): list of slide metadata dictionaries (optional)
         files ([<SlideImageFile>]): images associated with slides
-        thumbnail (str): local path or url to thumbnail image (optional)
-        extra_fields (dict): any additional data needed for node (optional)
-        domain_ns (str): who is providing the content (e.g. learningequality.org) (optional)
+
+    See ContentNode for inherited attributes.
     """
 
     kind = content_kinds.SLIDESHOW
 
-    def __init__(self, source_id, title, license, slideshow_data=None, **kwargs):
+    def __init__(self, *args, slideshow_data=None, **kwargs):
         if slideshow_data:
             extra_fields = {"slideshow_data": slideshow_data}
         else:
@@ -1375,9 +1324,7 @@ class SlideshowNode(ContentNode):
         # THe Node base class' __init__ method has:
         #       for f in files or []:
         #           self.add_file(f)
-        super(SlideshowNode, self).__init__(
-            source_id, title, license, extra_fields=extra_fields, **kwargs
-        )
+        super(SlideshowNode, self).__init__(*args, extra_fields=extra_fields, **kwargs)
 
     def add_file(self, file_to_add):
         """
@@ -1386,7 +1333,8 @@ class SlideshowNode(ContentNode):
         Args: file (SlideshowNode or ThumbnailFile): file model to add to node
         Returns: None
         """
-        from .files import ThumbnailFile, SlideImageFile
+        from .files import SlideImageFile
+        from .files import ThumbnailFile
 
         assert isinstance(file_to_add, ThumbnailFile) or isinstance(
             file_to_add, SlideImageFile
@@ -1547,7 +1495,7 @@ class StudioContentNode(TreeNode):
                         key
                     )
                 )
-        return super(StudioContentNode, self)._validate()
+        super(StudioContentNode, self)._validate()
 
     def to_dict(self):
         data = {
@@ -1567,3 +1515,256 @@ class StudioContentNode(TreeNode):
 
 # add alias for back-compatibility
 RemoteContentNode = StudioContentNode
+
+
+class _CurriculumNode(TopicNode):
+    """
+    Internal base class for curriculum-structured topic nodes (Course, Unit, Lesson).
+
+    Provides common functionality for setting modality and validating child types.
+    Not intended to be instantiated directly.
+
+    Attributes:
+        MODALITY: The modality constant from le_utils.constants.modalities
+        CHILD_CLASS: The allowed child node class
+    """
+
+    MODALITY = None  # Subclasses must define
+    CHILD_CLASS = None  # Subclasses must define
+
+    def __init__(self, *args, **kwargs):
+        kwargs["extra_fields"] = kwargs.get("extra_fields", {})
+        kwargs["extra_fields"]["options"] = kwargs["extra_fields"].get("options", {})
+        kwargs["extra_fields"]["options"]["modality"] = self.MODALITY
+        super().__init__(*args, **kwargs)
+
+    def _validate_child(self, node):
+        """Validate that node is an instance of the allowed child class."""
+        if not isinstance(node, self.CHILD_CLASS):
+            raise InvalidNodeException(
+                f"{self.__class__.__name__} can only have {self.CHILD_CLASS.__name__} children"
+            )
+
+    def add_child(self, node):
+        """Add a child node after validating its type."""
+        self._validate_child(node)
+        super().add_child(node)
+
+
+class LessonNode(_CurriculumNode):
+    """
+    Topic node representing a lesson within a unit.
+
+    Lessons can only contain resource nodes (ContentNode subclasses like
+    VideoNode, DocumentNode, etc.), not other topic nodes.
+
+    Attributes:
+        source_id (str): lesson's original id
+        title (str): lesson's title
+        description (str): description of lesson (optional)
+        thumbnail (str): local path or url to thumbnail image (optional)
+    """
+
+    MODALITY = modalities.LESSON
+    CHILD_CLASS = ContentNode
+
+
+class UnitNode(_CurriculumNode):
+    """
+    Topic node representing a unit within a course.
+
+    Units can only contain LessonNodes as children. Units also manage
+    pre/post test questions and learning objectives.
+
+    Attributes:
+        source_id (str): unit's original id
+        title (str): unit's title
+        description (str): description of unit (optional)
+        thumbnail (str): local path or url to thumbnail image (optional)
+        test_questions (list): list of (question, variant, learning_objectives) tuples
+        lesson_objectives (dict): mapping of source_id to list of LearningObjective
+    """
+
+    MODALITY = modalities.UNIT
+    CHILD_CLASS = LessonNode
+    _allows_questions = True
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.test_questions = []  # List of (question, variant, [LOs])
+        self.lesson_objectives = {}  # {source_id: [LOs]}
+
+    def _validate_learning_objectives(self, learning_objectives):
+        """Validate that all items are valid LearningObjective instances."""
+        if not learning_objectives:
+            raise InvalidNodeException("Must have at least one learning objective")
+        for lo in learning_objectives:
+            if not isinstance(lo, LearningObjective):
+                raise InvalidNodeException(
+                    f"Expected LearningObjective, got {type(lo).__name__}"
+                )
+
+    def add_child(self, node, learning_objectives):
+        """
+        Add a LessonNode with its associated learning objectives.
+
+        Note: this intentionally has a different signature from
+        _CurriculumNode.add_child(node) — learning_objectives is required.
+        This is safe because add_child is only called during channel
+        construction by chef code, never by internal tree-walking code.
+
+        Args:
+            node: LessonNode to add
+            learning_objectives: List of LearningObjective instances
+        """
+        self._validate_learning_objectives(learning_objectives)
+        if node.source_id in self.lesson_objectives:
+            raise InvalidNodeException(
+                f"Duplicate source_id '{node.source_id}' in {self.__class__.__name__}"
+            )
+        self.lesson_objectives[node.source_id] = learning_objectives
+        super().add_child(node)
+
+    def add_question(self, question, variant, learning_objectives):
+        """
+        Add a pre/post test question.
+
+        Args:
+            question: Question instance (same types as ExerciseNode)
+            variant: VARIANT_A or VARIANT_B
+            learning_objectives: List of LearningObjective instances
+        """
+        if variant not in (VARIANT_A, VARIANT_B):
+            raise InvalidNodeException("variant must be VARIANT_A or VARIANT_B")
+        self._validate_learning_objectives(learning_objectives)
+        self.test_questions.append((question, variant, learning_objectives))
+
+    def _validate(self):
+        """Validate the unit including question balance and LO matching."""
+        # Single pass: validate questions and partition by variant
+        variant_a = []
+        variant_b = []
+        for question, variant, los in self.test_questions:
+            question.validate()
+            if variant == VARIANT_A:
+                variant_a.append((question, los))
+            else:
+                variant_b.append((question, los))
+
+        # Minimum 2 questions per variant
+        self._validate_values(
+            len(variant_a) < 2, "Must have at least 2 VARIANT_A questions"
+        )
+        self._validate_values(
+            len(variant_b) < 2, "Must have at least 2 VARIANT_B questions"
+        )
+
+        # Equal total counts
+        self._validate_values(
+            len(variant_a) != len(variant_b),
+            "VARIANT_A and VARIANT_B must have equal question counts",
+        )
+
+        # LO sets must match
+        lesson_los = {lo.id for los in self.lesson_objectives.values() for lo in los}
+        question_los = {lo.id for _, los in variant_a + variant_b for lo in los}
+        self._validate_values(
+            lesson_los != question_los,
+            "Learning objectives on lessons must match those on questions",
+        )
+
+        # Each LO equally represented across variants and across LOs
+        lo_totals = {}
+        for lo_id in lesson_los:
+            a_count = sum(
+                1 for _, los in variant_a if any(lo.id == lo_id for lo in los)
+            )
+            b_count = sum(
+                1 for _, los in variant_b if any(lo.id == lo_id for lo in los)
+            )
+            self._validate_values(
+                a_count != b_count,
+                "Learning objective must have equal questions in each variant",
+            )
+            lo_totals[lo_id] = a_count + b_count
+
+        # Each LO must have the same total number of questions
+        if lo_totals:
+            expected = next(iter(lo_totals.values()))
+            self._validate_values(
+                any(c != expected for c in lo_totals.values()),
+                "Each learning objective must have the same total number of questions",
+            )
+
+        super()._validate()
+
+    def _get_mastery_criteria(self):
+        """Build mastery criteria dict for pre/post test."""
+        all_ids = [q.assessment_id for q, _, _ in self.test_questions]
+        a_ids = [q.assessment_id for q, v, _ in self.test_questions if v == VARIANT_A]
+        b_ids = [q.assessment_id for q, v, _ in self.test_questions if v == VARIANT_B]
+
+        return {
+            "mastery_model": mastery_criteria.PRE_POST_TEST,
+            "pre_post_test": {
+                "assessment_item_ids": all_ids,
+                "version_a_item_ids": a_ids,
+                "version_b_item_ids": b_ids,
+            },
+        }
+
+    def _get_learning_objectives_data(self):
+        """Build learning objectives structure per le_utils schema."""
+        # Collect unique LOs from lesson_objectives
+        # (validation guarantees match with questions)
+        all_los = {lo.id: lo for los in self.lesson_objectives.values() for lo in los}
+
+        return {
+            "learning_objectives": [lo.to_dict() for lo in all_los.values()],
+            "assessment_objectives": {
+                q.assessment_id: [lo.id for lo in los]
+                for q, _, los in self.test_questions
+            },
+            "lesson_objectives": {
+                child.get_node_id().hex: [
+                    lo.id for lo in self.lesson_objectives[child.source_id]
+                ]
+                for child in self.children
+                if child.source_id in self.lesson_objectives
+            },
+        }
+
+    def to_dict(self):
+        """Serialize UnitNode including mastery model and learning objectives in options."""
+        result = super().to_dict()
+
+        # Parse extra_fields, add mastery model and learning objectives to options
+        extra_fields = json.loads(result["extra_fields"])
+        extra_fields["options"]["completion_criteria"] = {
+            "model": completion_criteria.MASTERY,
+            "threshold": self._get_mastery_criteria(),
+        }
+        extra_fields["options"].update(self._get_learning_objectives_data())
+        result["extra_fields"] = json.dumps(extra_fields)
+
+        # Serialize test questions
+        result["questions"] = [q.to_dict() for q, _, _ in self.test_questions]
+
+        return result
+
+
+class CourseNode(_CurriculumNode):
+    """
+    Topic node representing a course.
+
+    Courses can only contain UnitNodes as children.
+
+    Attributes:
+        source_id (str): course's original id
+        title (str): course's title
+        description (str): description of course (optional)
+        thumbnail (str): local path or url to thumbnail image (optional)
+    """
+
+    MODALITY = modalities.COURSE
+    CHILD_CLASS = UnitNode

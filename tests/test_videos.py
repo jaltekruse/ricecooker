@@ -6,7 +6,8 @@ import shutil
 import subprocess
 
 import pytest
-from conftest import download_fixture_file
+from conftest import sample_hash_filename
+from conftest import sample_path
 from le_utils.constants import format_presets
 from le_utils.constants import licenses
 
@@ -16,85 +17,36 @@ from ricecooker.classes.files import VideoFile
 from ricecooker.classes.nodes import VideoNode
 
 
-@pytest.fixture
-def low_res_video():
-    source_url = (
-        "https://archive.org/download/vd_is_for_everybody/vd_is_for_everybody_512kb.mp4"
-    )
-    # local_path = os.path.join("tests","testcontent", "downloaded", "low_res_video.mp4")
-    local_path = os.path.abspath(
-        os.path.join(
-            os.path.dirname(__file__), "testcontent", "downloaded", "low_res_video.mp4"
-        )
-    )
-    download_fixture_file(source_url, local_path)
-    assert os.path.exists(local_path)
-    f = open(local_path, "rb")
+def _closed_sample(*parts):
+    """Open and close a committed sample so tests can use its ``.name`` attribute."""
+    f = open(sample_path(*parts), "rb")
     f.close()
     return f  # returns a closed file descriptor which we use for name attribute
+
+
+@pytest.fixture
+def low_res_video():
+    return _closed_sample("low_res_sample.mp4")
 
 
 @pytest.fixture
 def low_res_video_webm():
-    source_url = (
-        "https://ia801800.us.archive.org/28/items/rick-astley-never-gonna-give-you-up-video_202012/"
-        "Rick%20Astley%20-%20Never%20Gonna%20Give%20You%20Up%20Video.webm"
-    )
-    local_path = os.path.join(
-        "tests", "testcontent", "downloaded", "low_res_video.webm"
-    )
-    download_fixture_file(source_url, local_path)
-    assert os.path.exists(local_path)
-    f = open(local_path, "rb")
-    f.close()
-    return f  # returns a closed file descriptor which we use for name attribute
+    return _closed_sample("low_res_sample.webm")
 
 
 @pytest.fixture
 def high_res_video():
-    source_url = (
-        "https://ia800201.us.archive.org/7/items/"
-        "UnderConstructionFREEVideoBackgroundLoopHD1080p/"
-        "UnderConstruction%20-%20FREE%20Video%20Background%20Loop%20HD%201080p.mp4"
-    )
-    local_path = os.path.join(
-        "tests", "testcontent", "downloaded", "high_res_video.mp4"
-    )
-    download_fixture_file(source_url, local_path)
-    assert os.path.exists(local_path)
-    f = open(local_path, "rb")
-    f.close()
-    return f  # returns a closed file descriptor which we use for name attribute
+    return _closed_sample("high_res_sample.mp4")
 
 
 @pytest.fixture
 def high_res_video_webm():
-    source_url = "https://mirrors.creativecommons.org/movingimages/webm/CreativeCommonsPlusCommercial_720p.webm"
-    local_path = os.path.join(
-        "tests", "testcontent", "downloaded", "high_res_video.webm"
-    )
-    download_fixture_file(source_url, local_path)
-    assert os.path.exists(local_path)
-    f = open(local_path, "rb")
-    f.close()
-    return f  # returns a closed file descriptor which we use for name attribute
+    return _closed_sample("high_res_sample.webm")
 
 
 @pytest.fixture
 def low_res_ogv_video():
-    source_url = (
-        "https://archive.org/download/"
-        "UnderConstructionFREEVideoBackgroundLoopHD1080p/"
-        "UnderConstruction%20-%20FREE%20Video%20Background%20Loop%20HD%201080p.ogv"
-    )
-    local_path = os.path.join(
-        "tests", "testcontent", "downloaded", "low_res_ogv_video.ogv"
-    )
-    download_fixture_file(source_url, local_path)
-    assert os.path.exists(local_path)
-    f = open(local_path, "rb")
-    f.close()
-    return f  # returns a closed file descriptor which we use for name attribute
+    return _closed_sample("sample.ogv")
 
 
 @pytest.fixture
@@ -127,56 +79,56 @@ class Test_video_processing_and_presets(object):
         _clear_ricecookerfilecache()
 
     def test_basic_video_processing_low_res(self, low_res_video):
-        expected_video_filename = "897d83a2e5389d454d37feb574587516.mp4"
+        expected_video_filename = sample_hash_filename("low_res_sample.mp4")
         video_file = make_video_file(low_res_video)
         video_filename = video_file.process_file()
-        assert (
-            video_filename == expected_video_filename
-        ), "Video file should have filename {}".format(expected_video_filename)
+        assert video_filename == expected_video_filename, (
+            "Video file should have filename {}".format(expected_video_filename)
+        )
         video_path = config.get_storage_path(video_filename)
         assert os.path.isfile(video_path), "Video should be stored at {}".format(
             video_path
         )
-        assert (
-            video_file.get_preset() == format_presets.VIDEO_LOW_RES
-        ), "Should have low res preset"
+        assert video_file.get_preset() == format_presets.VIDEO_LOW_RES, (
+            "Should have low res preset"
+        )
 
     def test_basic_video_processing_low_res_webm(self, low_res_video_webm):
-        expected_video_filename = "5a2172860b2de19d746d00e3deeae3a7.webm"
+        expected_video_filename = sample_hash_filename("low_res_sample.webm")
         video_file = make_video_file(low_res_video_webm)
         video_filename = video_file.process_file()
-        assert (
-            video_filename == expected_video_filename
-        ), "Video file should have filename {}".format(expected_video_filename)
+        assert video_filename == expected_video_filename, (
+            "Video file should have filename {}".format(expected_video_filename)
+        )
         video_path = config.get_storage_path(video_filename)
         assert os.path.isfile(video_path), "Video should be stored at {}".format(
             video_path
         )
-        assert (
-            video_file.get_preset() == format_presets.VIDEO_LOW_RES
-        ), "Should have low res preset"
+        assert video_file.get_preset() == format_presets.VIDEO_LOW_RES, (
+            "Should have low res preset"
+        )
 
     def test_basic_video_processing_high_res(self, high_res_video):
-        expected_video_filename = "e0ca22680786379362d0c95db2318853.mp4"
+        expected_video_filename = sample_hash_filename("high_res_sample.mp4")
         video_file = make_video_file(high_res_video)
         video_filename = video_file.process_file()
-        assert (
-            video_filename == expected_video_filename
-        ), "Video file should have filename {}".format(expected_video_filename)
-        assert (
-            video_file.get_preset() == format_presets.VIDEO_HIGH_RES
-        ), "Should have high res preset"
+        assert video_filename == expected_video_filename, (
+            "Video file should have filename {}".format(expected_video_filename)
+        )
+        assert video_file.get_preset() == format_presets.VIDEO_HIGH_RES, (
+            "Should have high res preset"
+        )
 
     def test_basic_video_processing_high_res_webm(self, high_res_video_webm):
-        expected_video_filename = "06b4e0d8c50f2224868086ad2fb92511.webm"
+        expected_video_filename = sample_hash_filename("high_res_sample.webm")
         video_file = make_video_file(high_res_video_webm)
         video_filename = video_file.process_file()
-        assert (
-            video_filename == expected_video_filename
-        ), "Video file should have filename {}".format(expected_video_filename)
-        assert (
-            video_file.get_preset() == format_presets.VIDEO_HIGH_RES
-        ), "Should have high res preset"
+        assert video_filename == expected_video_filename, (
+            "Video file should have filename {}".format(expected_video_filename)
+        )
+        assert video_file.get_preset() == format_presets.VIDEO_HIGH_RES, (
+            "Should have high res preset"
+        )
 
 
 """ *********** TEST VIDEO COMPRESSION  *********** """
@@ -214,9 +166,9 @@ class Test_video_compression(object):
         video_path = config.get_storage_path(video_filename)
         width, height = get_resolution(video_path)
         assert height == 480, "should compress to 480 v resolution by defualt"
-        assert (
-            video_file.get_preset() == format_presets.VIDEO_LOW_RES
-        ), "Should have low res preset"
+        assert video_file.get_preset() == format_presets.VIDEO_LOW_RES, (
+            "Should have low res preset"
+        )
 
     def test_compression_works(self, high_res_video):
         video_file = make_video_file(
@@ -226,9 +178,9 @@ class Test_video_compression(object):
         video_path = config.get_storage_path(video_filename)
         width, height = get_resolution(video_path)
         assert height == 300, "should be compress to 300 v resolution"
-        assert (
-            video_file.get_preset() == format_presets.VIDEO_LOW_RES
-        ), "Should have low res preset"
+        assert video_file.get_preset() == format_presets.VIDEO_LOW_RES, (
+            "Should have low res preset"
+        )
 
     def test_compression_max_width_works(self, high_res_video):
         video_file = make_video_file(
@@ -238,19 +190,19 @@ class Test_video_compression(object):
         video_path = config.get_storage_path(video_filename)
         width, height = get_resolution(video_path)
         assert width == 200, "should be compress to 200 hz resolution"
-        assert (
-            video_file.get_preset() == format_presets.VIDEO_LOW_RES
-        ), "Should have low res preset"
+        assert video_file.get_preset() == format_presets.VIDEO_LOW_RES, (
+            "Should have low res preset"
+        )
 
     def test_handles_bad_file(self, bad_video):
         video_file = make_video_file(bad_video, ffmpeg_settings={"crf": 33})
         video_filename = video_file.process_file()
-        assert (
-            video_filename is None
-        ), "Should return None if trying to compress bad file"
-        assert (
-            video_file in config.FAILED_FILES
-        ), "Video file sould be added to config.FAILED_FILES"
+        assert video_filename is None, (
+            "Should return None if trying to compress bad file"
+        )
+        assert video_file in config.FAILED_FILES, (
+            "Video file sould be added to config.FAILED_FILES"
+        )
 
 
 """ *********** TEST VIDEO CONVERSION  *********** """
@@ -268,9 +220,9 @@ class Test_video_conversion(object):
         video_path = config.get_storage_path(video_filename)
         width, height = get_resolution(video_path)
         assert height == 300, "should be compress to 300 v resolution"
-        assert (
-            video_file.get_preset() == format_presets.VIDEO_LOW_RES
-        ), "Should have low res preset"
+        assert video_file.get_preset() == format_presets.VIDEO_LOW_RES, (
+            "Should have low res preset"
+        )
 
     def test_convert_and_resize_ogv_works(self, low_res_ogv_video):
         video_file = make_video_file(
@@ -280,9 +232,9 @@ class Test_video_conversion(object):
         video_path = config.get_storage_path(video_filename)
         width, height = get_resolution(video_path)
         assert height == 200, "should be compress to 200 v resolution"
-        assert (
-            video_file.get_preset() == format_presets.VIDEO_LOW_RES
-        ), "Should have low res preset"
+        assert video_file.get_preset() == format_presets.VIDEO_LOW_RES, (
+            "Should have low res preset"
+        )
 
 
 """ HELPER METHODS """

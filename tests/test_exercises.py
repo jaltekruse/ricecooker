@@ -1,4 +1,5 @@
-""" Tests for exercise nodes, questions, and files """
+"""Tests for exercise nodes, questions, and files"""
+
 import json
 import os
 import re
@@ -7,8 +8,10 @@ import uuid
 
 import pytest
 from le_utils.constants import exercises
+from le_utils.constants import format_presets
 from le_utils.constants import licenses
 from test_videos import _clear_ricecookerfilecache
+from vcr_config import my_vcr
 
 from ricecooker.classes.nodes import ExerciseNode
 from ricecooker.classes.nodes import InvalidNodeException
@@ -21,7 +24,6 @@ from ricecooker.config import STORAGE_DIRECTORY
 TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
 TESTCONTENT_DIR = os.path.join(TESTS_DIR, "testcontent")
 
-WAYBACK_PREFIX = "https://web.archive.org/web/20240621071535/"
 """ *********** EXERCISE FIXTURES *********** """
 
 
@@ -221,18 +223,16 @@ def test_MARKDOWN_IMAGE_REGEX_matches(sample_str, expected_matches):
 
 WEB_PREFIX = "${☣ CONTENTSTORAGE}/"
 
+# Committed image fixtures (bytes are identical to what the tests used to fetch
+# from the Wayback Machine, so the content hashes are unchanged) keep this test
+# offline and deterministic.
 image_texts_fixtures = [
     (
-        "{}https://learningequality.org/static/img/le-logo.svg".format(WAYBACK_PREFIX),
+        os.path.relpath(os.path.join(TESTCONTENT_DIR, "exercises", "le-logo.svg")),
         WEB_PREFIX + "52b097901664f83e6b7c92ae1af1721b.svg",
         "52b097901664f83e6b7c92ae1af1721b",
     ),
     (
-        "{}https://learningequality.org/static/img/no-wifi.png".format(WAYBACK_PREFIX),
-        WEB_PREFIX + "599aa896313be22dea6c0257772a464e.png",
-        "599aa896313be22dea6c0257772a464e",
-    ),
-    (  # slightly modified version of the above
         os.path.relpath(os.path.join(TESTCONTENT_DIR, "exercises", "no-wifi.png")),
         WEB_PREFIX + "599aa896313be22dea6c0257772a464e.png",
         "599aa896313be22dea6c0257772a464e",
@@ -257,9 +257,9 @@ def test_base_question_set_image(text, replacement_str, hash):
     new_text, images = testq.set_image(text)
 
     # check 1
-    assert (
-        new_text == replacement_str
-    ), "Unexpected replacement text produced by set_image"
+    assert new_text == replacement_str, (
+        "Unexpected replacement text produced by set_image"
+    )
 
     # check 2
     assert len(images) == 1, "Should find exactly one image"
@@ -270,9 +270,9 @@ def test_base_question_set_image(text, replacement_str, hash):
     assert hash in filename, "wrong content hash for file"
     expected_storage_dir = os.path.join(STORAGE_DIRECTORY, filename[0], filename[1])
     expected_storage_path = os.path.join(expected_storage_dir, filename)
-    assert os.path.exists(
-        expected_storage_path
-    ), "Image file not saved to ricecooker storage dir"
+    assert os.path.exists(expected_storage_path), (
+        "Image file not saved to ricecooker storage dir"
+    )
 
 
 # Test PerseusQuestion process_question method
@@ -303,7 +303,6 @@ with open(
     ),
     encoding="utf-8",
 ) as inf:
-
     item_data_bg = json.load(inf)
     datum = (
         item_data_bg,
@@ -320,7 +319,6 @@ with open(
     os.path.join(TESTCONTENT_DIR, "exercises", "perseus_question_new_bar_graphs.json"),
     encoding="utf-8",
 ) as inf:
-
     item_data_bar = json.load(inf)
     datum = (
         item_data_bar,
@@ -338,7 +336,6 @@ with open(
     os.path.join(TESTCONTENT_DIR, "exercises", "perseus_question_inline_link.json"),
     encoding="utf-8",
 ) as inf:
-
     item_data_link = json.load(inf)
     datum = (
         item_data_link,
@@ -353,6 +350,7 @@ with open(
 
 
 @pytest.mark.parametrize("item,image_hashes", perseus_test_data)
+@my_vcr.use_cassette
 def test_perseus_process_question(item, image_hashes):
     """
     Process a persues question and check that it finds all images, and returns
@@ -368,9 +366,9 @@ def test_perseus_process_question(item, image_hashes):
     filenames = testq.process_question()
 
     # check 1
-    assert len(filenames) == len(
-        expected_image_hashes
-    ), "wrong number of filenames found"
+    assert len(filenames) == len(expected_image_hashes), (
+        "wrong number of filenames found"
+    )
 
     # check 2
     image_hashes = set()
@@ -393,9 +391,17 @@ def test_exercise_base64_image_file(
     exercise_base64_image_file, exercise_base64_image_filename
 ):
     filename = exercise_base64_image_file.get_filename()
-    assert (
-        filename == exercise_base64_image_filename
-    ), "wrong filename for _ExerciseBase64ImageFile"
+    assert filename == exercise_base64_image_filename, (
+        "wrong filename for _ExerciseBase64ImageFile"
+    )
+
+
+def test_exercise_base64_image_preset(exercise_base64_image_file):
+    # Exercise images are attached to a question, not a node, so get_preset
+    # must not rely on ThumbnailPresetMixin's node dereference.
+    assert exercise_base64_image_file.get_preset() == format_presets.EXERCISE_IMAGE, (
+        "wrong preset for _ExerciseBase64ImageFile"
+    )
 
 
 @pytest.mark.xfail(
@@ -409,10 +415,10 @@ def test_exercise_graphie_filename(
     exercise_graphie_mock_download_session,
 ):
     filename = exercise_graphie_file.get_filename()
-    assert (
-        filename == exercise_graphie_filename
-    ), "wrong filename for _ExerciseGraphieFile"
+    assert filename == exercise_graphie_filename, (
+        "wrong filename for _ExerciseGraphieFile"
+    )
     replacement_str = exercise_graphie_file.get_replacement_str()
-    assert (
-        replacement_str == exercise_graphie_replacement_str
-    ), "wrong replacement string for _ExerciseGraphieFile "
+    assert replacement_str == exercise_graphie_replacement_str, (
+        "wrong replacement string for _ExerciseGraphieFile "
+    )

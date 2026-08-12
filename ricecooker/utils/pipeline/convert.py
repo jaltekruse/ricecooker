@@ -2,16 +2,17 @@
 To avoid making the pipeline overly convoluted, these handlers
 both validate and convert files.
 """
+
 import json
 import os
 import shutil
+import subprocess
 import tempfile
 import xml.etree.ElementTree as ET
 import zipfile
 from abc import abstractmethod
 from contextlib import contextmanager
 from dataclasses import field
-from functools import partial
 from typing import Dict
 from typing import Optional
 from typing import Union
@@ -27,29 +28,75 @@ from PIL import UnidentifiedImageError
 from PyPDF2 import PdfFileReader
 from PyPDF2.utils import PdfReadError
 
-from .file_handler import ExtensionMatchingHandler
-from .file_handler import StageHandler
-from ricecooker import config
+from ricecooker.config import LOGGER
 from ricecooker.exceptions import UnknownFileTypeError
 from ricecooker.utils.audio import AudioCompressionError
 from ricecooker.utils.audio import compress_audio
 from ricecooker.utils.caching import generate_key
+from ricecooker.utils.paths import extract_path_ext
+from ricecooker.utils.pipeline.context import ContentNodeMetadata
 from ricecooker.utils.pipeline.context import ContextMetadata
 from ricecooker.utils.pipeline.context import FileMetadata
 from ricecooker.utils.pipeline.exceptions import InvalidFileException
+from ricecooker.utils.references import DEFAULT_MAPPERS
+from ricecooker.utils.references import ReferenceMapper
+from ricecooker.utils.references import sanitize_style_css
+from ricecooker.utils.references import strip_scripts
 from ricecooker.utils.subtitles import build_subtitle_converter_from_file
 from ricecooker.utils.subtitles import InvalidSubtitleFormatError
 from ricecooker.utils.subtitles import InvalidSubtitleLanguageError
 from ricecooker.utils.subtitles import LANGUAGE_CODE_UNKNOWN
-from ricecooker.utils.utils import extract_path_ext
 from ricecooker.utils.videos import compress_video
 from ricecooker.utils.videos import validate_media_file
 from ricecooker.utils.videos import VideoCompressionError
 from ricecooker.utils.youtube import get_language_with_alpha2_fallback
 from ricecooker.utils.zip import create_predictable_zip
+from ricecooker.utils.zip import find_common_root
+from ricecooker.utils.zip import find_html_entrypoint
 
+from .file_handler import ExtensionMatchingHandler
+from .file_handler import StageHandler
 
 CONVERTIBLE_FORMATS = {p.id: p.convertible_formats for p in format_presets.PRESETLIST}
+
+# CSS properties permitted on inline ``style=`` attributes inside a KPUB.
+KPUB_STYLE_ALLOWLIST = {"text-align", "color", "background-color"}
+
+
+class PandocMissingError(Exception):
+    """Raised when the pandoc system binary is required but not installed."""
+
+
+class PandocConversionError(Exception):
+    """Raised when pandoc fails to convert a source document."""
+
+
+def sanitize_kpub_directory(temp_dir):
+    """Strip disallowed CSS and scripts from index.html in an extracted KPUB dir, in place."""
+    index_path = os.path.join(temp_dir, "index.html")
+    try:
+        with open(index_path, encoding="utf-8") as fh:
+            html = fh.read()
+    except (OSError, UnicodeDecodeError):
+        return
+    html, removed = sanitize_style_css(html, KPUB_STYLE_ALLOWLIST)
+    # Hand-authored KPUBs already reject scripts in validate_archive; strip_scripts
+    # is here for the pandoc path, whose --standalone template can inject an html5shiv.
+    html, script_removed = strip_scripts(html)
+    removed += script_removed
+    if removed:
+        with open(index_path, "w", encoding="utf-8") as fh:
+            fh.write(html)
+        LOGGER.info("KPUB sanitizer removed disallowed content: %s", ", ".join(removed))
+
+
+def _seal_directory_to_file(handler, temp_dir, ext):
+    """Zip ``temp_dir`` into a predictable archive and stream it into ``handler``'s output file."""
+    processed_zip_path = create_predictable_zip(temp_dir)
+    with handler.write_file(ext) as fh:
+        with open(processed_zip_path, "rb") as zf:
+            shutil.copyfileobj(zf, fh)
+    os.unlink(processed_zip_path)
 
 
 class VideoCompressionContextMetadata(ContextMetadata):
@@ -91,15 +138,14 @@ class VideoCompressionHandler(MediaCompressionHandler):
         return [{"ffmpeg_settings": context.video_settings}]
 
     def handle_file(self, path, ffmpeg_settings=None):
-
         ffmpeg_settings = ffmpeg_settings or {}
 
         input_ext = extract_path_ext(path)
 
         if input_ext in self.SUPPORTED_VIDEO_EXTS:
             output_ext = input_ext
-            if not config.COMPRESS and not ffmpeg_settings:
-                # If we're not compressing, just validate the file.
+            if not ffmpeg_settings:
+                # No compression settings provided, just validate the file.
                 is_valid, error = validate_media_file(path)
                 if not is_valid:
                     raise InvalidFileException(
@@ -144,8 +190,8 @@ class AudioCompressionHandler(MediaCompressionHandler):
         ext = extract_path_ext(path)
 
         if ext in self.SUPPORTED_AUDIO_EXTS:
-            if not config.COMPRESS and not ffmpeg_settings:
-                # If we're not compressing, just validate the file.
+            if not ffmpeg_settings:
+                # No compression settings provided, just validate the file.
                 is_valid, error = validate_media_file(path)
                 if not is_valid:
                     raise InvalidFileException(
@@ -165,11 +211,16 @@ class ArchiveProcessingContextMetadata(ContextMetadata):
 
 
 class ArchiveProcessingBaseHandler(ExtensionMatchingHandler):
-
     CONTEXT_CLASS = ArchiveProcessingContextMetadata
 
+    # Mappers for finding and rewriting external references before
+    # create_predictable_zip seals the archive. Every archive format may embed
+    # HTML/CSS, so the generic web mappers are the default; a format with its own
+    # reference style (e.g. H5P) extends this with its own mapper.
+    REFERENCE_MAPPERS = DEFAULT_MAPPERS
+
     def get_cache_key(self, path, audio_settings=None, video_settings=None) -> str:
-        if not config.COMPRESS:
+        if not audio_settings and not video_settings:
             return super().get_cache_key(path)
         # Mirror the old compress_files_in_archive logic, which used:
         # generate_key("COMPRESSED", filename, settings=ffmpeg_settings)
@@ -194,29 +245,39 @@ class ArchiveProcessingBaseHandler(ExtensionMatchingHandler):
     def validate_archive(self, path: str):
         pass
 
+    def pre_process(self, temp_dir):
+        """Hook run on the extracted archive dir before reference resolution. Default no-op."""
+        pass
+
     def handle_file(self, path, audio_settings=None, video_settings=None):
+        # Imported here rather than at module level: archive_assets depends on
+        # this package's exceptions, so a top-level import would be circular.
+        from ricecooker.utils.archive_assets import ArchiveProcessor
+
         self.validate_archive(path)
 
         ext = extract_path_ext(path)
 
-        # Create partial for reading & compressing subfiles
-        file_converter = partial(
-            self._read_and_compress_archive_file,
-            audio_settings=audio_settings,
-            video_settings=video_settings,
-            ext=ext,
-        )
-        # create_predictable_zip will iterate over subfiles, call file_converter
-        processed_zip_path = create_predictable_zip(
-            path, file_converter=file_converter if config.COMPRESS else None
-        )
+        # TemporaryDirectory removes the extracted (untrusted) content on exit, even on error.
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with zipfile.ZipFile(path) as zf:
+                zf.extractall(temp_dir)
 
-        with self.write_file(ext) as fh:
-            with open(processed_zip_path, "rb") as zf:
-                shutil.copyfileobj(zf, fh)
+            # pre_process runs before reference resolution: a url() inside a <style> block or
+            # a non-allowlisted style= would otherwise be downloaded, then orphaned when the
+            # sanitizer strips the content that referenced it.
+            self.pre_process(temp_dir)
 
-        # Clean up
-        os.unlink(processed_zip_path)
+            ArchiveProcessor(
+                temp_dir,
+                self.get_pipeline(),
+                convert_stage=self.parent,
+                mappers=self.REFERENCE_MAPPERS,
+                audio_settings=audio_settings,
+                video_settings=video_settings,
+            ).process()
+
+            _seal_directory_to_file(self, temp_dir, ext)
 
     @contextmanager
     def open_and_verify_archive(self, path):
@@ -236,89 +297,141 @@ class ArchiveProcessingBaseHandler(ExtensionMatchingHandler):
                 f"File {zf.filename} is not a valid {self.FILE_TYPE} file, {filepath} is missing."
             )
 
-    def _read_and_compress_archive_file(
-        self, filepath, reader, audio_settings=None, video_settings=None, ext=None
-    ):
-        extension = extract_path_ext(filepath, default_ext=ext)
-
-        # If it's mp4, webm, or mp3, compress it; else pass it through
-        if extension in {file_formats.MP4, file_formats.WEBM, file_formats.MP3}:
-            # read the original subfile bytes
-            original_bytes = reader(filepath)  # read raw data from the archive
-            with tempfile.NamedTemporaryFile(delete=False) as temp_in:
-                temp_in.write(original_bytes)
-                temp_in.flush()
-
-            try:
-                # Create a temp out for compressed result
-                with tempfile.NamedTemporaryFile(
-                    suffix=f".{extension}", delete=False
-                ) as temp_out:
-                    temp_out.close()
-
-                    if extension == file_formats.MP3:
-                        compress_audio(
-                            temp_in.name,
-                            temp_out.name,
-                            overwrite=True,
-                            **(audio_settings or {}),
-                        )
-                    else:
-                        compress_video(
-                            temp_in.name,
-                            temp_out.name,
-                            overwrite=True,
-                            **(video_settings or {}),
-                        )
-
-                    # read the compressed bytes
-                    with open(temp_out.name, "rb") as compressed_file:
-                        compressed_bytes = compressed_file.read()
-
-                return compressed_bytes
-            finally:
-                os.unlink(temp_in.name)
-                if os.path.exists(temp_out.name):
-                    os.unlink(temp_out.name)
-
-        return reader(filepath)
+    def _validate_index_html_body(self, zf, path, index_path="index.html"):
+        """Validate that the entry HTML exists and has a non-empty body."""
+        index_html = self.read_file_from_archive(zf, index_path)
+        try:
+            dom = html5lib.parse(index_html, namespaceHTMLElements=False)
+            body = dom.find("body")
+            if body is None:
+                raise InvalidFileException(
+                    f"File {path} is not a valid {self.FILE_TYPE} file, {index_path} is missing a body element."
+                )
+            # Check that the body has at least one child element
+            # for some reason it seems like comments don't get a string tag attribute
+            body_children = [
+                c for c in body.iter() if isinstance(c.tag, str) and c.tag != "body"
+            ]
+            if not (body.text and body.text.strip()) and not body_children:
+                raise InvalidFileException(
+                    f"File {path} is not a valid {self.FILE_TYPE} file, {index_path} is empty."
+                )
+            return dom
+        except ParseError:
+            raise InvalidFileException(
+                f"File {path} is not a valid {self.FILE_TYPE} file, {index_path} is not well-formed."
+            )
 
 
 class HTML5ConversionHandler(ArchiveProcessingBaseHandler):
-
     EXTENSIONS = {file_formats.HTML5}
     FILE_TYPE = "HTML5"
 
+    def handle_file(self, path, audio_settings=None, video_settings=None):
+        prepared_path, entry = self._prepare_archive(path)
+        try:
+            super().handle_file(
+                prepared_path,
+                audio_settings=audio_settings,
+                video_settings=video_settings,
+            )
+        finally:
+            if prepared_path != path and os.path.exists(prepared_path):
+                os.unlink(prepared_path)
+        # Mirror Studio: when the entry point is not index.html at the root,
+        # record it in extra_fields.options.entry so Kolibri loads it.
+        if entry and entry != "index.html":
+            return FileMetadata(
+                content_node_metadata=ContentNodeMetadata(
+                    extra_fields={"options": {"entry": entry}}
+                )
+            )
+        return None
+
     def validate_archive(self, path: str):
         with self.open_and_verify_archive(path) as zf:
-            # Check index.html exists and is valid HTML
-            index_html = self.read_file_from_archive(zf, "index.html")
-            try:
-                dom = html5lib.parse(index_html, namespaceHTMLElements=False)
-                body = dom.find("body")
-                if body is None:
-                    raise InvalidFileException(
-                        f"File {path} is not a valid HTML5 file, index.html is missing a body element."
-                    )
-                # Check that the body has at least one child element
-                # for some reason it seems like comments don't get a string tag attribute
-                body_children = [
-                    c for c in body.iter() if isinstance(c.tag, str) and c.tag != "body"
-                ]
-                # if not body.text.strip() and not body_children:
-                #     raise InvalidFileException(
-                #         f"File {path} is not a valid HTML5 file, index.html is empty."
-                #     )
-            except ParseError:
+            names = [n for n in zf.namelist() if not n.endswith("/")]
+            entry = find_html_entrypoint(names)
+            if entry is None:
                 raise InvalidFileException(
-                    f"File {path} is not a valid HTML5 file, index.html is not well-formed."
+                    f"File {path} is not a valid {self.FILE_TYPE} file, "
+                    "no HTML file was found in the archive."
                 )
+            self._validate_index_html_body(zf, path, entry)
+
+    def _prepare_archive(self, path):
+        """Denest a zip whose files all share a common parent directory
+        (mirroring Studio's ``cleanHTML5Zip``), and return the path to use
+        along with the detected HTML entry point.
+
+        Returns ``(path, entry)`` unchanged when there is nothing to strip;
+        otherwise returns the path to a denested temporary zip.
+        """
+        try:
+            with zipfile.ZipFile(path) as zf:
+                names = [n for n in zf.namelist() if not n.endswith("/")]
+        except zipfile.BadZipFile:
+            return path, None  # let validate_archive raise the standard error
+
+        common_root = find_common_root(names)
+        if not common_root:
+            return path, find_html_entrypoint(names)
+
+        prefix = common_root + "/"
+        with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as tmp:
+            tmp_path = tmp.name
+        with (
+            zipfile.ZipFile(path) as zin,
+            zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED) as zout,
+        ):
+            for name in names:
+                zout.writestr(name[len(prefix) :], zin.read(name))
+        denested_names = [n[len(prefix) :] for n in names]
+        return tmp_path, find_html_entrypoint(denested_names)
+
+
+def _map_h5p_paths(data, fn, urls):
+    """Walk an H5P ``content.json`` structure, applying ``fn`` to ``path`` values.
+
+    Recurses dicts and lists. Every string under a ``"path"`` key is a resource
+    reference: recorded in ``urls`` and replaced with ``fn(value)``.
+    """
+    if isinstance(data, dict):
+        result = {}
+        for key, value in data.items():
+            if key == "path" and isinstance(value, str):
+                urls.append(value)
+                result[key] = fn(value)
+            else:
+                result[key] = _map_h5p_paths(value, fn, urls)
+        return result
+    if isinstance(data, list):
+        return [_map_h5p_paths(item, fn, urls) for item in data]
+    return data
+
+
+class H5PContentMapper(ReferenceMapper):
+    """Maps external ``path`` references in an H5P ``content/content.json``.
+
+    H5P stores references as ``path`` values in a JSON manifest at a fixed
+    location, so this mapper matches that one file by path rather than extension.
+    """
+
+    CONTENT_JSON = "content/content.json"
+
+    def handles(self, path: str) -> bool:
+        return path.replace(os.sep, "/") == self.CONTENT_JSON
+
+    def map(self, content: str, fn):
+        urls = []
+        data = _map_h5p_paths(json.loads(content), fn, urls)
+        return json.dumps(data, ensure_ascii=False), urls
 
 
 class H5PConversionHandler(ArchiveProcessingBaseHandler):
-
     EXTENSIONS = {file_formats.H5P}
     FILE_TYPE = "H5P"
+    REFERENCE_MAPPERS = DEFAULT_MAPPERS + (H5PContentMapper(),)
 
     def validate_archive(self, path: str):
         with self.open_and_verify_archive(path) as zf:
@@ -339,7 +452,6 @@ class H5PConversionHandler(ArchiveProcessingBaseHandler):
 
 
 class EPUBConversionHandler(ArchiveProcessingBaseHandler):
-
     EXTENSIONS = {file_formats.EPUB}
     FILE_TYPE = "EPUB"
 
@@ -404,8 +516,37 @@ class EPUBConversionHandler(ArchiveProcessingBaseHandler):
             self._validate_opf(zf, path, opf_path)
 
 
-class BloomConversionHandler(ArchiveProcessingBaseHandler):
+class KPUBConversionHandler(ArchiveProcessingBaseHandler):
+    EXTENSIONS = {file_formats.HTML5_ARTICLE}
+    FILE_TYPE = "KPUB"
 
+    def pre_process(self, temp_dir):
+        sanitize_kpub_directory(temp_dir)
+
+    def validate_archive(self, path: str):
+        with self.open_and_verify_archive(path) as zf:
+            dom = self._validate_index_html_body(zf, path)
+
+            # Check for inline <script> tags (parsed without namespaces)
+            for _ in dom.iter("script"):
+                raise InvalidFileException(
+                    f"File {path} is not a valid KPUB file, inline JavaScript (<script> tags) is not allowed."
+                )
+
+            # Check for disallowed file types
+            for filename in zf.namelist():
+                lower_name = filename.lower()
+                if lower_name.endswith(".js"):
+                    raise InvalidFileException(
+                        f"File {path} is not a valid KPUB file, JavaScript files (.js) are not allowed."
+                    )
+                if lower_name.endswith(".css"):
+                    raise InvalidFileException(
+                        f"File {path} is not a valid KPUB file, external CSS files (.css) are not allowed."
+                    )
+
+
+class BloomConversionHandler(ArchiveProcessingBaseHandler):
     EXTENSIONS = {file_formats.BLOOMPUB, file_formats.BLOOMD}
     FILE_TYPE = "Bloom"
 
@@ -419,7 +560,7 @@ class BloomConversionHandler(ArchiveProcessingBaseHandler):
                 missing_fields = [f for f in required_meta_fields if f not in meta]
                 if missing_fields:
                     raise InvalidFileException(
-                        f'File {path} is not a valid bloom file, meta.json missing required fields: {", ".join(missing_fields)}'
+                        f"File {path} is not a valid bloom file, meta.json missing required fields: {', '.join(missing_fields)}"
                     )
             except json.JSONDecodeError:
                 raise InvalidFileException(
@@ -569,6 +710,47 @@ class SubtitleConversionHandler(ExtensionMatchingHandler):
         return FileMetadata(language=convert_lang_code)
 
 
+class DocumentConversionHandler(ExtensionMatchingHandler):
+    """Convert article-style documents to KPUB via pandoc, then sanitize."""
+
+    EXTENSIONS = {"docx", "odt", "rtf", "md", "markdown"}
+    HANDLED_EXCEPTIONS = [PandocConversionError]
+
+    def handle_file(self, path):
+        if shutil.which("pandoc") is None:
+            raise PandocMissingError(
+                "pandoc is required to convert documents (.docx/.odt/.rtf/.md/.markdown) "
+                "to KPUB. Install pandoc — see docs/installation.md."
+            )
+        # cwd=temp_dir below, so keep the input path absolute.
+        src = os.path.abspath(path)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            try:
+                subprocess.run(
+                    [
+                        "pandoc",
+                        src,
+                        "--standalone",
+                        "--mathml",
+                        "--extract-media=media",
+                        "-o",
+                        "index.html",
+                    ],
+                    cwd=temp_dir,
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+            except subprocess.CalledProcessError as e:
+                raise PandocConversionError(
+                    f"pandoc failed to convert {path}: {e.stderr}"
+                )
+            # pandoc --extract-media localizes embedded media only; unlike an
+            # uploaded KPUB, remote <img> refs are not downloaded (out of scope).
+            sanitize_kpub_directory(temp_dir)
+            _seal_directory_to_file(self, temp_dir, file_formats.HTML5_ARTICLE)
+
+
 class ConversionStageHandler(StageHandler):
     STAGE = "CONVERT"
     DEFAULT_CHILDREN = [
@@ -580,6 +762,8 @@ class ConversionStageHandler(StageHandler):
         EPUBConversionHandler,
         H5PConversionHandler,
         HTML5ConversionHandler,
+        DocumentConversionHandler,
+        KPUBConversionHandler,
         VideoCompressionHandler,
         AudioCompressionHandler,
     ]

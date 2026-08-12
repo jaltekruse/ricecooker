@@ -3,6 +3,8 @@ import os
 
 from le_utils.constants import content_kinds
 
+from ricecooker.config import LOGGER
+
 from .jsontrees import AUDIO_FILE
 from .jsontrees import AUDIO_NODE
 from .jsontrees import DOCUMENT_FILE
@@ -16,8 +18,6 @@ from .jsontrees import VIDEO_FILE
 from .jsontrees import VIDEO_NODE
 from .jsontrees import write_tree_to_json_tree
 from .metadata_provider import path_to_tuple
-from ricecooker.config import LOGGER
-
 
 # LINECOOK CONFIGS
 ################################################################################
@@ -30,9 +30,7 @@ FILE_EXCLUDE_EXTENTIONS = [
     ".gitkeep",
 ]
 FILE_SKIP_PATTENRS = []
-FILE_SKIP_THUMBNAILS = (
-    []
-)  # global list of paths that correspond to thumbails for other content nodes
+FILE_SKIP_THUMBNAILS = []  # global list of paths that correspond to thumbails for other content nodes
 
 
 # LINECOOK HELPER FUNCTIONS

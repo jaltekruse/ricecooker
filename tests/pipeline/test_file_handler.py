@@ -1,10 +1,17 @@
+import shutil
 import threading
+from unittest.mock import patch
 
 import pytest
 
+from ricecooker.utils.pipeline import FilePipeline
 from ricecooker.utils.pipeline.context import FileMetadata
+from ricecooker.utils.pipeline.convert import ConversionStageHandler
+from ricecooker.utils.pipeline.convert import VideoCompressionHandler
 from ricecooker.utils.pipeline.exceptions import InvalidFileException
+from ricecooker.utils.pipeline.extract_metadata import ExtractMetadataStageHandler
 from ricecooker.utils.pipeline.file_handler import FileHandler
+from ricecooker.utils.pipeline.transfer import DownloadStageHandler
 
 
 class TestFileHandler(FileHandler):
@@ -87,3 +94,72 @@ def test_output_path_thread_safety():
     # Each thread should get its own correct path, not interfere with each other
     assert results["A"] == "/storage/file_A.txt"
     assert results["B"] == "/storage/file_B.txt"
+
+
+def test_unknown_init_context_field_raises():
+    with pytest.raises(TypeError, match="unexpected context"):
+        VideoCompressionHandler(bogus=1)
+
+
+def test_handler_with_no_context_fields_rejects_init_context():
+    with pytest.raises(TypeError, match="unexpected context"):
+        TestFileHandler(anything=1)
+
+
+def _fake_compress(path, outpath, overwrite=True, **settings):
+    shutil.copyfile(path, outpath)
+
+
+def _pipeline_with_video_init_context(crf):
+    convert = ConversionStageHandler(
+        children=[VideoCompressionHandler(video_settings={"crf": crf})]
+    )
+    return FilePipeline(
+        children=[DownloadStageHandler(), convert, ExtractMetadataStageHandler()]
+    )
+
+
+def test_handler_init_context_flows_through_pipeline(video_file):
+    pipeline = _pipeline_with_video_init_context(30)
+    with patch(
+        "ricecooker.utils.pipeline.convert.compress_video", side_effect=_fake_compress
+    ) as m:
+        pipeline.execute(video_file.path, skip_cache=True)
+    assert m.called and m.call_args.kwargs["crf"] == 30
+
+
+def test_call_context_overrides_handler_init_context(video_file):
+    pipeline = _pipeline_with_video_init_context(30)
+    with patch(
+        "ricecooker.utils.pipeline.convert.compress_video", side_effect=_fake_compress
+    ) as m:
+        pipeline.execute(
+            video_file.path, context={"video_settings": {"crf": 24}}, skip_cache=True
+        )
+    assert m.called and m.call_args.kwargs["crf"] == 24
+
+
+def test_file_pipeline_default_context_supplies_compression_settings(video_file):
+    """Settings in the pipeline's default_context are passed to handlers."""
+    pipeline = FilePipeline(default_context={"video_settings": {"crf": 30}})
+    with patch(
+        "ricecooker.utils.pipeline.convert.compress_video", side_effect=_fake_compress
+    ) as mock_compress:
+        pipeline.execute(video_file.path, skip_cache=True)
+
+    assert mock_compress.called, "Video compression should use default context settings"
+    assert mock_compress.call_args.kwargs["crf"] == 30
+
+
+def test_file_pipeline_execute_context_overrides_default_context(video_file):
+    """Context passed to execute() takes precedence over default_context."""
+    pipeline = FilePipeline(default_context={"video_settings": {"crf": 30}})
+    with patch(
+        "ricecooker.utils.pipeline.convert.compress_video", side_effect=_fake_compress
+    ) as mock_compress:
+        pipeline.execute(
+            video_file.path, context={"video_settings": {"crf": 24}}, skip_cache=True
+        )
+
+    assert mock_compress.called
+    assert mock_compress.call_args.kwargs["crf"] == 24

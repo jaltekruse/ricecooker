@@ -8,15 +8,16 @@ from le_utils.constants import format_presets
 from le_utils.constants import languages
 from requests import HTTPError
 
-from .. import config
-from ..exceptions import UnknownFileTypeError
 from ricecooker.utils.caching import FILECACHE
 from ricecooker.utils.caching import get_cache_filename
+from ricecooker.utils.images import ChromiumUnavailableError
 from ricecooker.utils.images import create_image_from_epub
 from ricecooker.utils.images import create_image_from_pdf_page
 from ricecooker.utils.images import create_image_from_zip
+from ricecooker.utils.images import create_image_from_zip_screenshot
 from ricecooker.utils.images import create_tiled_image
 from ricecooker.utils.images import ThumbnailGenerationError
+from ricecooker.utils.paths import extract_path_ext
 from ricecooker.utils.pipeline import FilePipeline
 from ricecooker.utils.pipeline.convert import AudioCompressionHandler
 from ricecooker.utils.pipeline.convert import ImageConversionHandler
@@ -25,10 +26,12 @@ from ricecooker.utils.pipeline.convert import VideoCompressionHandler
 from ricecooker.utils.pipeline.exceptions import ExpectedFileException
 from ricecooker.utils.pipeline.exceptions import InvalidFileException
 from ricecooker.utils.pipeline.transfer import CatchAllWebResourceDownloadHandler
-from ricecooker.utils.utils import copy_file_to_storage
-from ricecooker.utils.utils import extract_path_ext
+from ricecooker.utils.storage import copy_file_to_storage
 from ricecooker.utils.videos import extract_thumbnail_from_video
 from ricecooker.utils.youtube import get_language_with_alpha2_fallback
+
+from .. import config
+from ..exceptions import UnknownFileTypeError
 
 fallback_pipeline = FilePipeline()
 
@@ -113,7 +116,7 @@ class File(object):
 
     @property
     def size(self):
-        return os.path.getsize(config.get_storage_path(self.get_filename()))
+        return os.path.getsize(config.get_existing_storage_path(self.get_filename()))
 
     def truncate_fields(self):
         if (
@@ -393,6 +396,13 @@ class Base64ImageFile(ThumbnailPresetMixin, DownloadFile):
 class _ExerciseBase64ImageFile(Base64ImageFile):
     default_preset = format_presets.EXERCISE_IMAGE
 
+    def get_preset(self):
+        # Exercise images are attached to a question, not a node, so the
+        # ThumbnailPresetMixin.get_preset inherited from Base64ImageFile
+        # (which dereferences self.node) does not apply. Use the exercise
+        # image preset, mirroring _ExerciseImageFile.
+        return self.preset or self.default_preset
+
     def get_replacement_str(self):
         return self.get_filename() or self.path
 
@@ -556,7 +566,21 @@ class ExtractedHTMLZipThumbnailFile(ExtractedThumbnailFile):
     allowed_formats = HTMLZipFile.allowed_formats
 
     def extractor_fun(self, fpath_in, thumbpath_out, **kwargs):
+        try:
+            create_image_from_zip_screenshot(fpath_in, thumbpath_out, **kwargs)
+            return
+        except ChromiumUnavailableError:
+            pass
+        except ThumbnailGenerationError as err:
+            config.LOGGER.warning(
+                "\t    Screenshot render failed, falling back to biggest-image "
+                "heuristic: {}".format(err)
+            )
         create_image_from_zip(fpath_in, thumbpath_out, **kwargs)
+
+
+class ExtractedKPUBThumbnailFile(ExtractedHTMLZipThumbnailFile):
+    allowed_formats = {file_formats.HTML5_ARTICLE}
 
 
 class ExtractedVideoThumbnailFile(ExtractedThumbnailFile):

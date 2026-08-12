@@ -1,4 +1,5 @@
-""" Tests for file downloading and processing """
+"""Tests for file downloading and processing"""
+
 import base64
 import hashlib
 import os.path
@@ -10,6 +11,7 @@ from unittest.mock import MagicMock
 from unittest.mock import patch
 
 import pytest
+from conftest import sample_path
 from le_utils.constants import file_formats
 from le_utils.constants import format_presets
 from le_utils.constants import languages
@@ -18,7 +20,6 @@ from PIL import Image
 from PyPDF2 import PdfFileWriter
 from requests import ConnectionError
 from requests import HTTPError
-from test_pdfutils import _save_file_url_to_path
 from vcr_config import my_vcr
 
 from ricecooker import config
@@ -35,11 +36,42 @@ from ricecooker.classes.files import StudioFile
 from ricecooker.classes.files import SubtitleFile
 from ricecooker.classes.files import VideoFile
 from ricecooker.classes.files import YouTubeVideoFile
+from ricecooker.exceptions import FileNotFoundException
 from ricecooker.utils.audio import AudioCompressionError
 from ricecooker.utils.pipeline.convert import PDFValidationHandler
 from ricecooker.utils.pipeline.exceptions import InvalidFileException
 from ricecooker.utils.videos import VideoCompressionError
 from ricecooker.utils.zip import create_predictable_zip
+
+
+def test_get_existing_storage_path_missing_raises_descriptive_error():
+    missing = "0123456789abcdef0123456789abcdef.mp4"
+    storage_path = config.get_storage_path(missing)
+    assert not os.path.isfile(storage_path)
+    with pytest.raises(FileNotFoundException) as exc_info:
+        config.get_existing_storage_path(missing)
+    assert storage_path in str(exc_info.value)
+
+
+def test_get_existing_storage_path_present_returns_path():
+    present = "fedcba9876543210fedcba9876543210.mp4"
+    storage_path = config.get_storage_path(present)
+    with open(storage_path, "wb") as f:
+        f.write(b"data")
+    try:
+        assert config.get_existing_storage_path(present) == storage_path
+    finally:
+        os.remove(storage_path)
+
+
+def test_size_missing_storage_file_raises_descriptive_error():
+    # Simulates a .ricecookerfilecache entry whose storage/ file is gone.
+    missing = File(filename="0123456789abcdef0123456789abcdef.mp4")
+    storage_path = config.get_storage_path(missing.get_filename())
+    assert not os.path.isfile(storage_path)
+    with pytest.raises(FileNotFoundException) as exc_info:
+        _ = missing.size
+    assert storage_path in str(exc_info.value)
 
 
 @pytest.fixture
@@ -126,27 +158,36 @@ def test_download_filenames(
     subtitle_file,
     subtitle_filename,
 ):
-    assert (
-        video_file.process_file() == video_filename
-    ), "Video file should have filename {}".format(video_filename)
-    assert (
-        html_file.process_file() == html_filename
-    ), "HTML file should have filename {}".format(html_filename)
-    assert (
-        audio_file.process_file() == audio_filename
-    ), "Audio file should have filename {}".format(audio_filename)
-    assert (
-        document_file.process_file() == document_filename
-    ), "PDF document file should have filename {}".format(document_filename)
-    assert (
-        epub_file.process_file() == epub_filename
-    ), "ePub document file should have filename {}".format(epub_filename)
-    assert (
-        thumbnail_file.process_file() == thumbnail_filename
-    ), "Thumbnail file should have filename {}".format(thumbnail_filename)
-    assert (
-        subtitle_file.process_file() == subtitle_filename
-    ), "Subtitle file should have filename {}".format(subtitle_filename)
+    assert video_file.process_file() == video_filename, (
+        "Video file should have filename {}".format(video_filename)
+    )
+    # sample_html.zip inlines a data: URI (in CSS/jquery-ui.css) that the
+    # pipeline now explodes into a real file (issue #691), so the archive is
+    # reprocessed on download. Its content-derived hash is platform-dependent
+    # (HTML rewriting + zip compression), so assert it is a .zip that differs
+    # from the raw download hash rather than pinning exact bytes.
+    processed_html_filename = html_file.process_file()
+    assert processed_html_filename.endswith(".zip"), (
+        "HTML file should be stored as a .zip, got {}".format(processed_html_filename)
+    )
+    assert processed_html_filename != html_filename, (
+        "data: URIs should have been exploded, changing the archive hash"
+    )
+    assert audio_file.process_file() == audio_filename, (
+        "Audio file should have filename {}".format(audio_filename)
+    )
+    assert document_file.process_file() == document_filename, (
+        "PDF document file should have filename {}".format(document_filename)
+    )
+    assert epub_file.process_file() == epub_filename, (
+        "ePub document file should have filename {}".format(epub_filename)
+    )
+    assert thumbnail_file.process_file() == thumbnail_filename, (
+        "Thumbnail file should have filename {}".format(thumbnail_filename)
+    )
+    assert subtitle_file.process_file() == subtitle_filename, (
+        "Subtitle file should have filename {}".format(subtitle_filename)
+    )
 
 
 def read_file_hash(filepath):
@@ -197,41 +238,41 @@ def test_download_to_storage(
     subtitle_path = config.get_storage_path(subtitle_filename)
 
     assert os.path.isfile(video_path), "Video should be stored at {}".format(video_path)
-    assert (
-        read_file_hash(video_path) == video_filename.split(".")[0]
-    ), "Video hash should match"
+    assert read_file_hash(video_path) == video_filename.split(".")[0], (
+        "Video hash should match"
+    )
     assert os.path.isfile(html_path), "HTML should be stored at {}".format(html_path)
-    assert (
-        read_file_hash(html_path) == html_filename.split(".")[0]
-    ), "HTML hash should match"
+    assert read_file_hash(html_path) == html_filename.split(".")[0], (
+        "HTML hash should match"
+    )
     assert os.path.isfile(audio_path), "Audio should be stored at {}".format(audio_path)
-    assert (
-        read_file_hash(audio_path) == audio_filename.split(".")[0]
-    ), "Audio hash should match"
+    assert read_file_hash(audio_path) == audio_filename.split(".")[0], (
+        "Audio hash should match"
+    )
     assert os.path.isfile(document_path), "PDF document should be stored at {}".format(
         document_path
     )
-    assert (
-        read_file_hash(document_path) == document_filename.split(".")[0]
-    ), "PDF hash should match"
+    assert read_file_hash(document_path) == document_filename.split(".")[0], (
+        "PDF hash should match"
+    )
     assert os.path.isfile(epub_path), "ePub document should be stored at {}".format(
         epub_path
     )
-    assert (
-        read_file_hash(epub_path) == epub_filename.split(".")[0]
-    ), "ePub hash should match"
+    assert read_file_hash(epub_path) == epub_filename.split(".")[0], (
+        "ePub hash should match"
+    )
     assert os.path.isfile(thumbnail_path), "Thumbnail should be stored at {}".format(
         thumbnail_path
     )
-    assert (
-        read_file_hash(thumbnail_path) == thumbnail_filename.split(".")[0]
-    ), "Thumbnail hash should match"
+    assert read_file_hash(thumbnail_path) == thumbnail_filename.split(".")[0], (
+        "Thumbnail hash should match"
+    )
     assert os.path.isfile(subtitle_path), "Subtitle should be stored at {}".format(
         subtitle_path
     )
-    assert (
-        read_file_hash(subtitle_path) == subtitle_filename.split(".")[0]
-    ), "Subtitle hash should match"
+    assert read_file_hash(subtitle_path) == subtitle_filename.split(".")[0], (
+        "Subtitle hash should match"
+    )
 
 
 # Base File class method tests
@@ -436,9 +477,9 @@ def test_audio_compression_error(audio_file):
 def test_set_language():
     sub1 = SubtitleFile("path", language="en")
     sub2 = SubtitleFile("path", language=languages.getlang("es"))
-    assert isinstance(
-        sub1.language, str
-    ), "Subtitles must be converted to Language class"
+    assert isinstance(sub1.language, str), (
+        "Subtitles must be converted to Language class"
+    )
     assert isinstance(sub2.language, str), "Subtitles can be passed as Langauge models"
     assert sub1.language == "en", "Subtitles must have a language"
     assert sub2.language == "es", "Subtitles must have a language"
@@ -592,7 +633,20 @@ def valid_zip():
 
 @pytest.fixture
 def invalid_zip():
-    # Create a temporary zip file without index.html
+    # Create a temporary zip file without any HTML file
+    fd, path = tempfile.mkstemp(suffix=".zip")
+    os.close(fd)
+
+    with zipfile.ZipFile(path, "w") as zf:
+        zf.writestr("script.js", "console.log('test');")
+
+    yield path
+    os.unlink(path)
+
+
+@pytest.fixture
+def non_index_entry_zip():
+    # Create a temporary zip file whose only HTML file is not index.html
     fd, path = tempfile.mkstemp(suffix=".zip")
     os.close(fd)
 
@@ -630,16 +684,27 @@ def test_invalid_htmlzip_validation(invalid_zip):
 
     assert html_file.filename is None
     assert html_file.error is not None
-    assert "index.html" in html_file.error
+    assert "no HTML file" in html_file.error
+
+
+def test_non_index_entry_htmlzip_validation(non_index_entry_zip):
+    # A zip whose only HTML file is not index.html is valid; the entry
+    # point is detected and recorded in extra_fields.options.entry.
+    html_file = HTMLZipFile(non_index_entry_zip)
+    html_file.process_file()
+
+    assert html_file.filename is not None
+    assert html_file.error is None
 
 
 def test_nested_index_htmlzip_validation(nested_index_zip):
+    # A zip whose files all live under a common parent directory is
+    # denested so that index.html ends up at the root.
     html_file = HTMLZipFile(nested_index_zip)
     html_file.process_file()
 
-    assert html_file.filename is None
-    assert html_file.error is not None
-    assert "index.html" in html_file.error
+    assert html_file.filename is not None
+    assert html_file.error is None
 
 
 @pytest.mark.skip(
@@ -814,10 +879,6 @@ def test_bad_subtitles_raises(bad_subtitles_file):
     assert subs_file.process_file() is None
 
 
-PRESSURECOOKER_REPO_URL = "https://raw.githubusercontent.com/bjester/pressurecooker/"
-PRESSURECOOKER_FILES_URL_BASE = (
-    PRESSURECOOKER_REPO_URL + "pycaption/tests/files/subtitles/"
-)
 PRESSURECOOKER_SUBS_FIXTURES = [
     {
         "srcfilename": "basic.srt",
@@ -846,31 +907,13 @@ PRESSURECOOKER_SUBS_FIXTURES = [
 ]
 
 
-def download_fixture_files(fixtures_list):
+def resolve_fixture_files(fixtures_list):
     """
-    Downloads all the subtitles test files and return as list of fixutes dicts.
+    Resolve the committed subtitle test files and return as list of fixture dicts.
     """
     fixtures = []
     for fixture in fixtures_list:
-        srcfilename = fixture["srcfilename"]
-        # localpath = os.path.join("tests", "testcontent", "downloaded", srcfilename)
-        local_path = os.path.abspath(
-            os.path.join(
-                os.path.dirname(__file__), "testcontent", "downloaded", srcfilename
-            )
-        )
-
-        if not os.path.exists(local_path):
-            url = (
-                fixture["url"]
-                if "url" in fixture.keys()
-                else PRESSURECOOKER_FILES_URL_BASE + srcfilename
-            )
-            _save_file_url_to_path(url, local_path)
-            assert os.path.exists(local_path), (
-                "Error mising local test file " + local_path
-            )
-        fixture["localpath"] = local_path
+        fixture["localpath"] = sample_path("subtitles", fixture["srcfilename"])
         fixtures.append(fixture)
     return fixtures
 
@@ -878,9 +921,9 @@ def download_fixture_files(fixtures_list):
 @pytest.fixture
 def pressurecooker_test_files():
     """
-    Downloads all the subtitles test files and return as list of fixutes dicts.
+    Resolve all the subtitles test files and return as list of fixture dicts.
     """
-    return download_fixture_files(PRESSURECOOKER_SUBS_FIXTURES)
+    return resolve_fixture_files(PRESSURECOOKER_SUBS_FIXTURES)
 
 
 def test_convertible_subtitles_from_pressurecooker(pressurecooker_test_files):
@@ -898,9 +941,9 @@ def test_convertible_subtitles_from_pressurecooker(pressurecooker_test_files):
         storage_path = config.get_storage_path(filename)
         with open(storage_path, encoding="utf-8") as converted_vtt:
             filecontents = converted_vtt.read()
-            assert (
-                fixture["check_words"] in filecontents
-            ), "missing check_words in converted subs"
+            assert fixture["check_words"] in filecontents, (
+                "missing check_words in converted subs"
+            )
 
 
 def test_convertible_substitles_ar_ttml():
@@ -1256,11 +1299,10 @@ def test_video_compression_cache_keys_with_settings(
 def test_video_compression_cache_keys_no_settings(
     mock_filecache, video_file, video_filename
 ):
-    """Test cache key generation for video compression with default settings"""
+    """Test cache key generation for video compression without settings"""
     path = video_file.path
     video = VideoFile(path)
-    with patch("ricecooker.utils.pipeline.convert.config.COMPRESS", True):
-        video.process_file()
+    video.process_file()
 
     expected_keys = {
         f"DOWNLOAD:{path}",
@@ -1295,11 +1337,10 @@ def test_audio_compression_cache_keys_with_settings(
 def test_audio_compression_cache_keys_no_settings(
     mock_filecache, audio_file, audio_filename
 ):
-    """Test cache key generation for audio compression with default settings"""
+    """Test cache key generation for audio compression without settings"""
     path = audio_file.path
     audio = AudioFile(path)
-    with patch("ricecooker.utils.pipeline.convert.config.COMPRESS", True):
-        audio.process_file()
+    audio.process_file()
 
     expected_keys = {
         f"DOWNLOAD:{path}",
@@ -1376,18 +1417,27 @@ def test_subtitle_cache_keys_with_format(mock_filecache, subtitle_file):
     assert set(mock_filecache.cache.keys()) == expected_keys
 
 
-def test_html5_zip_cache_keys(mock_filecache, html_file):
-    """Test cache key generation for HTML5 zip processing"""
+def test_html5_zip_cache_keys(mock_filecache, html_file, html_filename):
+    """Test cache key generation for HTML5 zip processing.
+
+    The fixture inlines two ``data:image/gif`` assets, which CONVERT now
+    explodes into real files (issue #691). So the zip spine (DOWNLOAD →
+    CONVERT → EXTRACT_METADATA) is joined by a CONVERT key for each exploded
+    gif. CONVERT rewrites the archive, so its input filename is the downloaded
+    zip (``html_filename``) while EXTRACT runs on the rewritten zip.
+    """
     path = html_file.path
     html = HTMLZipFile(path)
     html.process_file()
 
-    expected_keys = {
-        f"DOWNLOAD:{path}",
-        f"CONVERT:{html.filename}",
-        f"EXTRACT_METADATA:{html.filename}",
+    keys = set(mock_filecache.cache.keys())
+    assert f"DOWNLOAD:{path}" in keys
+    assert f"CONVERT:{html_filename}" in keys
+    assert f"EXTRACT_METADATA:{html.filename}" in keys
+    gif_convert_keys = {
+        k for k in keys if k.startswith("CONVERT:") and k.endswith(".gif")
     }
-    assert set(mock_filecache.cache.keys()) == expected_keys
+    assert len(gif_convert_keys) == 2
 
 
 def test_base64_image_cache_keys(mock_filecache):

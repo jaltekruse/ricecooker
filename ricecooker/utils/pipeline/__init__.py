@@ -4,12 +4,12 @@ from copy import deepcopy
 from typing import Dict
 from typing import Optional
 
+from ricecooker.utils.pipeline.context import FileMetadata
+
 from .convert import ConversionStageHandler
 from .extract_metadata import ExtractMetadataStageHandler
 from .file_handler import CompositeHandler
 from .transfer import DownloadStageHandler
-from ricecooker.utils.pipeline.context import FileMetadata
-
 
 # Do this to prevent import of broken Windows filetype registry that makes guesstype not work.
 # https://www.thecodingforums.com/threads/mimetypes-guess_type-broken-in-windows-on-py2-7-and-python-3-x.952693/
@@ -44,6 +44,18 @@ class FilePipeline(CompositeHandler):
     pipeline = FilePipeline(children=[download_stage, ConversionStageHandler(), ExtractMetadataStageHandler()])
     ```
     This will replace the default `DownloadStageHandler` with a new one that has a `DiskResourceHandler` as its only child.
+
+    Instead of a combined `default_context`, a stage's handler can be configured directly with init-time context:
+    ```python
+    from ricecooker.utils.pipeline import FilePipeline
+    from ricecooker.utils.pipeline.convert import ConversionStageHandler, VideoCompressionHandler
+    from ricecooker.utils.pipeline.extract_metadata import ExtractMetadataStageHandler
+    from ricecooker.utils.pipeline.transfer import DownloadStageHandler
+
+    convert = ConversionStageHandler(children=[VideoCompressionHandler(video_settings={"crf": 28})])
+    pipeline = FilePipeline(children=[DownloadStageHandler(), convert, ExtractMetadataStageHandler()])
+    ```
+    Context passed to `execute()` (and the pipeline's `default_context`) overrides a handler's init context.
     """
 
     DEFAULT_CHILDREN = [
@@ -51,6 +63,12 @@ class FilePipeline(CompositeHandler):
         ConversionStageHandler,
         ExtractMetadataStageHandler,
     ]
+
+    def __init__(self, children=None, default_context=None):
+        super().__init__(children=children)
+        # Context merged into every execute() call — e.g. the compression
+        # settings the chef derives from its --compress flag.
+        self.default_context = default_context or {}
 
     def execute(
         self,
@@ -61,7 +79,8 @@ class FilePipeline(CompositeHandler):
         """
         Execute the pipeline for a given file path.
         """
-        context = context or {}
+        # Merge the pipeline defaults with the per-call context; the caller wins.
+        context = {**self.default_context, **(context or {})}
         file_metadata_list = [FileMetadata(path=path)]
         for handler in self._children:
             updated_file_metadata_list = []

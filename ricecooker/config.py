@@ -1,24 +1,26 @@
 """
 Settings and global config values for ricecooker.
 """
+
 import atexit
-import hashlib
 import logging.config
 import os
 import shutil
 import socket
+import sys
 import tempfile
 
 import requests
+from requests.adapters import HTTPAdapter
 from requests_file import FileAdapter
+from urllib3.util.retry import Retry
 
+from .exceptions import FileNotFoundException
 
 UPDATE = False
-COMPRESS = False
 VIDEO_HEIGHT = None
 THUMBNAILS = False
 PUBLISH = False
-PROGRESS_MANAGER = None
 SUSHI_BAR_CLIENT = None
 FILE_PIPELINE = None
 STAGE = False
@@ -56,6 +58,17 @@ def setup_logging(level=logging.INFO, main_log=None, error_log=None, add_loggers
     """
     global _ERROR_LOG, _MAIN_LOG
 
+    # On Windows the default stdout/stderr codec is the locale codepage
+    # (cp1252), which raises UnicodeEncodeError on non-ASCII log messages
+    # such as Arabic node titles. Force UTF-8 where the stream supports it.
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            try:
+                reconfigure(encoding="utf-8", errors="backslashreplace")
+            except (ValueError, OSError):
+                pass
+
     if not error_log:
         error_log = _ERROR_LOG
     else:
@@ -82,6 +95,7 @@ def setup_logging(level=logging.INFO, main_log=None, error_log=None, add_loggers
             "class": "logging.FileHandler",
             "filename": main_log,
             "formatter": "simple_date",
+            "encoding": "utf-8",
         }
     if error_log:
         logger_handlers.append("error")
@@ -90,6 +104,7 @@ def setup_logging(level=logging.INFO, main_log=None, error_log=None, add_loggers
             "class": "logging.FileHandler",
             "filename": error_log,
             "formatter": "simple_date",
+            "encoding": "utf-8",
         }
 
     # The default configuration of a logger (used in below config)
@@ -139,7 +154,7 @@ def setup_logging(level=logging.INFO, main_log=None, error_log=None, add_loggers
 setup_logging()
 
 
-# Domain and file store location for uploading to production Studio server
+# Domain for uploading to production Studio server
 DEFAULT_DOMAIN = "https://api.studio.learningequality.org"
 DOMAIN_ENV = os.getenv("STUDIO_URL", None)
 if DOMAIN_ENV is None:  # check old ENV varable for backward compatibility
@@ -147,7 +162,6 @@ if DOMAIN_ENV is None:  # check old ENV varable for backward compatibility
 DOMAIN = DOMAIN_ENV if DOMAIN_ENV else DEFAULT_DOMAIN
 if DOMAIN.endswith("/"):
     DOMAIN = DOMAIN.rstrip("/")
-FILE_STORE_LOCATION = hashlib.md5(DOMAIN.encode("utf-8")).hexdigest()
 
 try:
     TASK_THREADS = int(os.environ.get("TASK_THREADS"))
@@ -155,9 +169,6 @@ except (ValueError, TypeError):
     TASK_THREADS = 5
 
 CURRENT_CWD = os.getcwd()
-
-# Allow users to choose which phantomjs they use
-PHANTOMJS_PATH = os.getenv("PHANTOMJS_PATH", None)
 
 # URL for authenticating user on Kolibri Studio
 AUTHENTICATION_URL = "{domain}/api/internal/authenticate_user_internal"
@@ -191,9 +202,6 @@ STORAGE_DIRECTORY = os.getenv(
     "RICECOOKER_STORAGE", os.path.join(CURRENT_CWD, "storage")
 )
 
-# Folder to store progress tracking information
-RESTORE_DIRECTORY = "restore"
-
 # Session for communicating to Kolibri Studio
 SESSION = requests.Session()
 
@@ -204,8 +212,20 @@ FILECACHE_DIRECTORY = os.getenv(
 
 FAILED_FILES = []
 
-# Session for downloading files
+# Session for downloading files. Retry transient failures (connection resets,
+# read timeouts, 429/5xx) so a slow or briefly unavailable host does not fail
+# the download outright — parity with the retry adapter the old downloader.py
+# session mounted before it was removed.
 DOWNLOAD_SESSION = requests.Session()
+_download_retry = Retry(
+    total=3,
+    backoff_factor=1,
+    status_forcelist=(429, 500, 502, 503, 504),
+    allowed_methods=frozenset(["GET", "HEAD"]),
+    raise_on_status=False,
+)
+DOWNLOAD_SESSION.mount("http://", HTTPAdapter(max_retries=_download_retry))
+DOWNLOAD_SESSION.mount("https://", HTTPAdapter(max_retries=_download_retry))
 DOWNLOAD_SESSION.mount("file://", FileAdapter())
 
 # Environment variable indicating we should use a proxy for yt_dlp downloads
@@ -380,35 +400,29 @@ def get_storage_path(filename):
     return os.path.join(directory, filename)
 
 
+def get_existing_storage_path(filename):
+    """Like get_storage_path, but verify the file is actually present.
+
+    Raises FileNotFoundException when the .ricecookerfilecache references a
+    file that is no longer in storage/, so callers report the mismatch
+    descriptively instead of crashing with a bare FileNotFoundError.
+    """
+    path = get_storage_path(filename)
+    if not os.path.isfile(path):
+        raise FileNotFoundException(
+            f"Storage file missing: {path}. The .ricecookerfilecache references a file that is not present "
+            f"in storage/. Re-run the chef to re-download it (missing files are re-fetched automatically), "
+            f"or delete .ricecookerfilecache to force a full re-scan."
+        )
+    return path
+
+
 def authentication_url():
     """authentication_url: returns url to login to Kolibri Studio
     Args: None
     Returns: string url to authenticate_user_internal endpoint
     """
     return AUTHENTICATION_URL.format(domain=DOMAIN)
-
-
-def init_file_mapping_store():
-    """init_file_mapping_store: creates log to keep track of downloaded files
-    Args: None
-    Returns: None
-    """
-    # Make storage directory for restore files if it doesn't already exist
-    path = os.path.join(RESTORE_DIRECTORY, FILE_STORE_LOCATION)
-    if not os.path.exists(path):
-        os.makedirs(path)
-
-
-def get_restore_path(filename):
-    """get_restore_path: returns path to directory for restoration points
-    Args:
-        filename (str): Name of file to store
-    Returns: string path to file
-    """
-    path = os.path.join(RESTORE_DIRECTORY, FILE_STORE_LOCATION)
-    if not os.path.exists(path):
-        os.makedirs(path)
-    return os.path.join(path, filename + ".pickle")
 
 
 def check_version_url():

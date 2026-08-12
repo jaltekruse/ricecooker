@@ -6,8 +6,9 @@ import sys
 
 from requests.exceptions import RequestException
 
-from .. import config
 from ricecooker.exceptions import InvalidNodeException
+
+from .. import config
 
 
 class InsufficientStorageException(Exception):
@@ -30,32 +31,28 @@ class ChannelManager:
         self.failed_uploads = {}
         self.file_map = {}
         self.all_nodes = []
+        self.root_id = None  # Will be set during early permission check
+        self.channel_id = None  # Will be set during early permission check
 
     def validate(self):
-        """validate: checks if tree structure is valid
-        Args: None
-        Returns: boolean indicating if tree is valid
-        """
+        """Validate every node in the tree. Raises InvalidNodeException in strict mode; returns None."""
         if not self.all_nodes:
             self.all_nodes = self.gather_tree_recur([], self.channel)
-        valid = True
         with concurrent.futures.ThreadPoolExecutor(
             max_workers=config.TASK_THREADS
         ) as executor:
-            for result in executor.map(self.validate_node, self.all_nodes):
-                valid = valid and result
-        return valid
+            for _ in executor.map(self.validate_node, self.all_nodes):
+                pass
 
     def validate_node(self, node):
         try:
-            return node.validate()
+            node.validate()
         except InvalidNodeException as e:
             if config.STRICT:
                 raise
             else:
                 node._error = str(e)
                 config.LOGGER.warning(node._error)
-        return True
 
     def process_tree(self):
         """
@@ -71,6 +68,33 @@ class ChannelManager:
             for data in executor.map(self.process_node, self.all_nodes):
                 self.file_map.update(data)
         return list(self.file_map.keys())
+
+    def deduplicate_shared_nodes(self):
+        """Clone nodes reused under multiple parents so each gets a distinct node_id (issue #354).
+
+        A shared node object would otherwise keep one cached node_id, so only its
+        last placement survives publish to Kolibri. Later cross-parent placements
+        are replaced with Node.copy() clones; content_id (from source_id) is shared.
+        """
+        self._deduplicate_recur(self.channel, set())
+
+    def _deduplicate_recur(self, node, seen):
+        seen.add(id(node))
+        local_seen = set()
+        new_children = []
+        for child in node.children:
+            if id(child) in local_seen:
+                # same-parent duplicate: leave untouched for validate() to reject
+                new_children.append(child)
+            elif id(child) in seen:
+                # cross-parent reuse: clone so this placement gets its own node_id
+                new_children.append(child.copy(parent=node))
+            else:
+                local_seen.add(id(child))
+                child.parent = node  # fix parent overwritten during construction
+                new_children.append(child)
+                self._deduplicate_recur(child, seen)
+        node.children = new_children
 
     def gather_tree_recur(self, nodes, node):
         # Process node's children
@@ -162,7 +186,8 @@ class ChannelManager:
         file_data = self.file_map[filename]
         if file_data.skip_upload:
             return
-        with open(config.get_storage_path(filename), "rb") as file_obj:
+        storage_path = config.get_existing_storage_path(filename)
+        with open(storage_path, "rb") as file_obj:
             data = {
                 "size": file_data.size,
                 "checksum": file_data.checksum,
@@ -229,24 +254,19 @@ class ChannelManager:
         Returns: None
         """
         counter = 0
-        files_to_upload = list(
-            set(file_list) - set(self.uploaded_files)
-        )  # In case restoring from previous session
-        try:
-            with concurrent.futures.ThreadPoolExecutor(
-                max_workers=config.TASK_THREADS
-            ) as executor:
-                # Start the upload operations
-                for filename in executor.map(self._handle_upload, files_to_upload):
-                    if filename is not None:
-                        counter += 1
-                        config.LOGGER.info(
-                            "\tUploaded {0} ({count}/{total}) ".format(
-                                filename, count=counter, total=len(files_to_upload)
-                            )
+        files_to_upload = list(set(file_list) - set(self.uploaded_files))
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=config.TASK_THREADS
+        ) as executor:
+            # Start the upload operations
+            for filename in executor.map(self._handle_upload, files_to_upload):
+                if filename is not None:
+                    counter += 1
+                    config.LOGGER.info(
+                        "\tUploaded {0} ({count}/{total}) ".format(
+                            filename, count=counter, total=len(files_to_upload)
                         )
-        finally:
-            config.PROGRESS_MANAGER.set_uploading(self.uploaded_files)
+                    )
 
     def reattempt_upload_fails(self):
         """reattempt_upload_fails: uploads failed files to server
@@ -269,7 +289,11 @@ class ChannelManager:
         from datetime import datetime
 
         start_time = datetime.now()
-        root, channel_id = self.add_channel()
+        # Use cached root_id and channel_id if already set (from early permission check)
+        if self.root_id is not None and self.channel_id is not None:
+            root, channel_id = self.root_id, self.channel_id
+        else:
+            root, channel_id = self.add_channel()
         self.node_count_dict = {"upload_count": 0, "total_count": self.channel.count()}
 
         config.LOGGER.info("\tPreparing fields...")

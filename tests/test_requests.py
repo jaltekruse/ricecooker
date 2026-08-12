@@ -1,4 +1,5 @@
-""" Tests for handling requests to Kolibri Studio """
+"""Tests for handling requests to Kolibri Studio"""
+
 import copy
 import uuid
 
@@ -9,7 +10,6 @@ from ricecooker.classes.nodes import DocumentNode
 from ricecooker.classes.nodes import TopicNode
 from ricecooker.exceptions import InvalidNodeException
 from ricecooker.managers.tree import ChannelManager
-
 
 """ *********** TOPIC FIXTURES *********** """
 
@@ -81,6 +81,6 @@ def invalid_tree_2(channel, topic, invalid_document):
 
 
 def test_validate(tree, invalid_tree, invalid_tree_2):
-    assert tree.validate(), "Tree should pass validation"
+    tree.validate()
     pytest.raises(InvalidNodeException, invalid_tree.validate)
     pytest.raises(InvalidNodeException, invalid_tree_2.validate)

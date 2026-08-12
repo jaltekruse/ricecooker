@@ -1,4 +1,5 @@
-""" Tests for data validation and construction """
+"""Tests for data validation and construction"""
+
 import json
 import uuid
 
@@ -9,7 +10,6 @@ from ricecooker.classes.nodes import ChannelNode
 from ricecooker.classes.nodes import TopicNode
 from ricecooker.exceptions import InvalidNodeException
 from ricecooker.exceptions import InvalidQuestionException
-
 
 """ *********** CHANNEL TESTS *********** """
 
@@ -50,24 +50,24 @@ def test_validate(
     exercise,
     exercise_invalid_question,
 ):
-    assert channel.validate(), "Valid channel should pass validation"
+    assert channel.validate() is None, "Valid channel should pass validation"
     pytest.raises(InvalidNodeException, invalid_channel.validate)
-    assert topic.validate(), "Valid topics should pass validation"
+    topic.validate()
 
     # Content node validation
     pytest.raises(InvalidNodeException, contentnode_invalid_license.validate)
     pytest.raises(InvalidNodeException, contentnode_no_source_id.validate)
     pytest.raises(InvalidNodeException, contentnode_invalid_files.process_files)
-    assert video.validate(), "Valid videos should pass validation"
+    video.validate()
     pytest.raises(InvalidNodeException, video_invalid_files.process_files)
-    assert audio.validate(), "Valid audio content should pass validation"
+    audio.validate()
     pytest.raises(InvalidNodeException, audio_invalid_files.process_files)
-    assert document.validate(), "Valid document content should pass validation"
+    document.validate()
     pytest.raises(InvalidNodeException, document_invalid_files.process_files)
-    assert html.validate(), "Valid html content should pass validation"
+    html.validate()
     pytest.raises(InvalidNodeException, html_invalid_files.process_files)
     pytest.raises(InvalidNodeException, html_invalid_zip.process_files)
-    assert exercise.validate(), "Valid html content should pass validation"
+    exercise.validate()
     pytest.raises(InvalidQuestionException, exercise_invalid_question.validate)
 
 
@@ -102,15 +102,15 @@ def test_alternative_domain_namespace(
     topic_alt_node_id,
     topic_alt_content_id,
 ):
-    assert (
-        topic_alternative_domain.get_domain_namespace() == topic_domain_namespace
-    ), "Topic domain should be {}".format(topic_domain_namespace)
-    assert (
-        topic_alternative_domain.get_content_id() == topic_alt_content_id
-    ), "Topic content id should be {}".format(topic_alt_content_id)
-    assert (
-        topic_alternative_domain.get_node_id() == topic_alt_node_id
-    ), "Topic node id should be {}".format(topic_alt_node_id)
+    assert topic_alternative_domain.get_domain_namespace() == topic_domain_namespace, (
+        "Topic domain should be {}".format(topic_domain_namespace)
+    )
+    assert topic_alternative_domain.get_content_id() == topic_alt_content_id, (
+        "Topic content id should be {}".format(topic_alt_content_id)
+    )
+    assert topic_alternative_domain.get_node_id() == topic_alt_node_id, (
+        "Topic node id should be {}".format(topic_alt_node_id)
+    )
 
 
 """ *********** TO_DICT TESTS *********** """
@@ -118,9 +118,9 @@ def test_alternative_domain_namespace(
 
 def test_channel_to_dict(channel, channel_data):
     channel_dict = channel.to_dict().items()
-    assert len(channel_dict) == len(
-        channel_data.items()
-    ), "Channel to_dict does not have the expected number of fields"
+    assert len(channel_dict) == len(channel_data.items()), (
+        "Channel to_dict does not have the expected number of fields"
+    )
     for key, value in channel_dict:
         assert value == channel_data[key], "Mismatched {}: {} != {}".format(
             key, value, channel_data[key]
@@ -216,14 +216,14 @@ def test_exercise_to_dict(exercise, exercise_data):
     exercise_dict = exercise.to_dict()
     exercise_dict.pop("questions")
     the_exercise_data = json.loads(exercise_dict["extra_fields"])
-    assert (
-        the_exercise_data == exercise_data["extra_fields"]
-    ), "Different extra_fields found"
+    assert the_exercise_data == exercise_data["extra_fields"], (
+        "Different extra_fields found"
+    )
     del exercise_dict["extra_fields"]
     del exercise_data["extra_fields"]
-    assert exercise.questions == exercise_data.pop(
-        "questions"
-    ), "Exercise questions do not match"
+    assert exercise.questions == exercise_data.pop("questions"), (
+        "Exercise questions do not match"
+    )
     for key, _ in exercise_data.items():
         assert key in exercise_dict, "Key {} is not found in to_dict method".format(key)
     for key, value in exercise_dict.items():

@@ -9,12 +9,10 @@ Ricecooker CLI
 --------------
 This listing shows the `ricecooker` command line interface (CLI) arguments:
 
-    usage: sushichef.py  [-h] [--token TOKEN] [-u] [-v] [--quiet] [--warn]
-                            [--debug] [--compress] [--thumbnails]
-                            [--resume]  [--step {CONSTRUCT_CHANNEL, CREATE_TREE,
-                                                 DOWNLOAD_FILES, GET_FILE_DIFF,
-                                                 START_UPLOAD, UPLOAD_CHANNEL}]
-                            [--deploy] [--publish]
+    usage: sushichef.py  [-h] [--token TOKEN] [-u] [--debug] [-v] [--warn]
+                            [--quiet] [--compress] [--thumbnails]
+                            [--download-attempts DOWNLOAD_ATTEMPTS]
+                            [--prompt] [--deploy] [--publish] [--sample SIZE]
 
     required arguments:
       --token TOKEN         Studio API Access Token (specify wither the token
@@ -22,18 +20,22 @@ This listing shows the `ricecooker` command line interface (CLI) arguments:
 
     optional arguments:
       -h, --help            show this help message and exit
+      -u, --update          Force file re-download (skip .ricecookerfilecache/).
       --debug               Print extra debugging infomation.
       -v, --verbose         Verbose mode (default).
+      --warn                Print errors and warnings.
+      --quiet               Print only errors.
       --compress            Compress videos using ffmpeg -crf=32 -b:a 32k mono.
       --thumbnails          Automatically generate thumbnails for content nodes.
-      --resume              Resume chef session from a specified step.
-      --step  {INIT, ...    Step to resume progress from (must be used with --resume flag)
-      --update              Force re-download of files (skip .ricecookerfilecache/ check)
-      --sample SIZE         Upload a sample of SIZE nodes from the channel.
+      --download-attempts N Maximum number of times to retry downloading files (default: 3).
+      --prompt              Prompt user to open the channel after the chef run.
       --deploy              Immediately deploy changes to channel's main tree.
                             This operation will overwrite the previous channel
-                            content. Use only during development.
+                            content. Use only during development. Staging is
+                            the default, so omit this flag to get a safe,
+                            reviewable draft upload instead.
       --publish             Publish newly uploaded version of the channel.
+      --sample SIZE         Upload a sample of SIZE nodes from the channel.
 
 As you can tell, there are lot of arguments to choose from, and this is not even
 the complete list: you'll have to run `./sushichef.py -h` to see the latest version.
@@ -55,7 +57,7 @@ This is required if you suspect the files on the source website have been update
 Note that some chef scripts implement their own caching mechanism, so you need
 to disable those caches as well if you want to make sure you're getting new content.
 Use the commands `rm -rf .webcache` to clear the webcache if it is present,
-and `rm -rf .ricecookerfilecache/* storage/* restore/*` to clean all ricecooker
+and `rm -rf .ricecookerfilecache/* storage/*` to clean all ricecooker
 directories and start from scratch.
 
 

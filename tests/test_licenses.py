@@ -1,4 +1,5 @@
-""" Tests for license getting and serialization """
+"""Tests for license getting and serialization"""
+
 import json
 
 import pytest
@@ -13,7 +14,6 @@ from le_utils.constants.licenses import PUBLIC_DOMAIN
 from le_utils.constants.licenses import SPECIAL_PERMISSIONS
 
 from ricecooker.classes.licenses import get_license
-
 
 """ *********** LICENSE FIXTURES *********** """
 

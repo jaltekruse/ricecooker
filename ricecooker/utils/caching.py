@@ -10,9 +10,8 @@ from cachecontrol.heuristics import datetime_to_header
 from cachecontrol.heuristics import expire_after
 
 from ricecooker import config
-from ricecooker.utils.utils import get_hash
-from ricecooker.utils.utils import is_valid_url
-
+from ricecooker.utils.storage import get_hash
+from ricecooker.utils.validators import is_valid_url
 
 # Cache for filenames
 FILECACHE = FileCache(config.FILECACHE_DIRECTORY, forever=True)
@@ -55,7 +54,6 @@ class InvalidatingCacheControlAdapter(CacheControlAdapter):
         )
 
     def send(self, request, **kw):
-
         # delete any existing cached value from the cache
         try:
             cache_url = self.controller.cache_url(request.url)

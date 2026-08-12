@@ -2,15 +2,19 @@ import os
 
 import PIL
 import pytest  # noqa F401
+from le_utils.constants import format_presets
 from le_utils.constants import licenses
 from test_tree import thumbnail_path  # noqa F401
 from test_tree import thumbnail_path_jpg  # noqa F401
 from test_videos import _clear_ricecookerfilecache
 from test_videos import low_res_video  # noqa F401
+from vcr_config import my_vcr
 
 from ricecooker import config
+from ricecooker.classes.files import DownloadFile
 from ricecooker.classes.files import ExtractedEPubThumbnailFile
 from ricecooker.classes.files import ExtractedHTMLZipThumbnailFile
+from ricecooker.classes.files import ExtractedKPUBThumbnailFile
 from ricecooker.classes.files import ExtractedPdfThumbnailFile
 from ricecooker.classes.files import ExtractedVideoThumbnailFile
 from ricecooker.classes.files import ThumbnailFile
@@ -20,7 +24,6 @@ from ricecooker.classes.nodes import DocumentNode
 from ricecooker.classes.nodes import HTML5AppNode
 from ricecooker.classes.nodes import TopicNode
 from ricecooker.classes.nodes import VideoNode
-
 
 SHOW_THUMBS = False  # set to True to show outputs when running tests locally
 
@@ -63,15 +66,17 @@ class TestThumbnailSetting(object):
         assert len(failed_files) == 1, "multiple failed files found"
         failed_file = failed_files[0]
         assert failed_file.error, "must have error set"
-        assert (
-            thumbnail_file == failed_file
-        ), "bad thumbnail file not found in config.FAILED_FILES"
+        assert thumbnail_file == failed_file, (
+            "bad thumbnail file not found in config.FAILED_FILES"
+        )
 
     # HAPPY PATHS
     ############################################################################
 
     def test_set_png_thumbnail_from_local_path(
-        self, low_res_video, thumbnail_path  # noqa F811
+        self,
+        low_res_video,
+        thumbnail_path,  # noqa F811
     ):
         video_node = self.get_video_node(  # noqa F811
             path=low_res_video.name, thumbnail=thumbnail_path
@@ -81,7 +86,9 @@ class TestThumbnailSetting(object):
         self.check_correct_thumbnail(video_node)
 
     def test_set_jpg_thumbnail_from_local_path(
-        self, low_res_video, thumbnail_path_jpg  # noqa F811
+        self,
+        low_res_video,
+        thumbnail_path_jpg,  # noqa F811
     ):
         video_node = self.get_video_node(
             path=low_res_video.name, thumbnail=thumbnail_path_jpg
@@ -95,6 +102,7 @@ class TestThumbnailSetting(object):
         thumbnail_filename = thumbnail_file.get_filename()
         assert thumbnail_filename == expected_thumbnail_filename, "Wrong thumbnail"
 
+    @my_vcr.use_cassette
     def test_set_thumbnail_from_url(self, low_res_video):  # noqa F811
         video_node = self.get_video_node(
             path=low_res_video.name, thumbnail=THUMBNAIL_URL
@@ -103,6 +111,7 @@ class TestThumbnailSetting(object):
         _ = video_node.process_files()
         self.check_correct_thumbnail(video_node)
 
+    @my_vcr.use_cassette
     def test_set_thumbnail_from_url_with_querystring(self, low_res_video):  # noqa F811
         url = THUMBNAIL_URL + "?querystringkey=querystringvalue"
         video_node = self.get_video_node(path=low_res_video.name, thumbnail=url)
@@ -111,7 +120,9 @@ class TestThumbnailSetting(object):
         self.check_correct_thumbnail(video_node)
 
     def test_set_thumbnail_from_ThumbnailFile(
-        self, low_res_video, thumbnail_path  # noqa F811
+        self,
+        low_res_video,
+        thumbnail_path,  # noqa F811
     ):
         thumbnail_file = ThumbnailFile(thumbnail_path)
         video_node = self.get_video_node(
@@ -142,7 +153,9 @@ class TestThumbnailSetting(object):
         self.assert_failed_thumbnail(video_node)
 
     def test_set_thumbnail_from_bad_path(
-        self, low_res_video, fake_thumbnail_file  # noqa F811
+        self,
+        low_res_video,
+        fake_thumbnail_file,  # noqa F811
     ):
         """
         File path exists, but is not a valid PNG file.
@@ -192,9 +205,9 @@ class TestThumbnailGeneration(object):
         assert len(failed_files) == 1, "multiple failed files found"
         failed_file = failed_files[0]
         assert failed_file.error, "must have error set"
-        assert (
-            thumbnail_file == failed_file
-        ), "bad thumbnail file not found in config.FAILED_FILES"
+        assert thumbnail_file == failed_file, (
+            "bad thumbnail file not found in config.FAILED_FILES"
+        )
 
     # HAPPY PATHS
     ############################################################################
@@ -228,6 +241,15 @@ class TestThumbnailGeneration(object):
         filenames = node.process_files()
         assert len(filenames) == 2, "expected two filenames"
         self.check_has_thumbnail(node)
+
+    def test_generate_thumbnail_from_kpub(self):
+        node = DocumentNode(
+            "doc-src-id", "Document", licenses.PUBLIC_DOMAIN, thumbnail=None
+        )
+        kpub_file = DownloadFile("some.kpub", preset=format_presets.KPUB_ZIP)
+        kpub_file.filename = "test.kpub"
+        node.add_file(kpub_file)
+        assert isinstance(node.generate_thumbnail(), ExtractedKPUBThumbnailFile)
 
     def test_generate_thumbnail_from_video(self, video_file):
         node = VideoNode("vid-src-id", "Video", licenses.PUBLIC_DOMAIN, thumbnail=None)

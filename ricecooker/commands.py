@@ -9,8 +9,6 @@ from requests.exceptions import HTTPError
 from . import __version__
 from . import config
 from .classes.nodes import ChannelNode
-from .managers.progress import RestoreManager
-from .managers.progress import Status
 from .managers.tree import ChannelManager
 from .utils.slack import send_slack_notification
 
@@ -24,7 +22,7 @@ def uploadchannel_wrapper(chef, args, options):
     """
     args_and_options = args.copy()
     args_and_options.update(options)
-    uploadchannel(chef, **args_and_options)
+    return uploadchannel(chef, **args_and_options)
 
 
 def uploadchannel(  # noqa: C901
@@ -33,8 +31,6 @@ def uploadchannel(  # noqa: C901
     update=False,
     thumbnails=False,
     download_attempts=3,
-    resume=False,
-    step=Status.LAST.name,
     token="#",
     prompt=False,
     publish=False,
@@ -49,20 +45,18 @@ def uploadchannel(  # noqa: C901
         update (bool): indicates whether to re-download files (optional)
         thumbnails (bool): indicates whether to automatically derive thumbnails from content (optional)
         download_attempts (int): number of times to retry downloading files (optional)
-        resume (bool): indicates whether to resume last session automatically (optional)
-        step (str): step to resume process from (optional)
         token (str): content server authorization token
         prompt (bool): indicates whether to prompt user to open channel when done (optional)
         publish (bool): indicates whether to automatically publish channel (optional)
         compress (bool): indicates whether to compress larger files (optional)
         stage (bool): indicates whether to stage rather than deploy channel (optional)
         kwargs (dict): extra keyword args will be passed to construct_channel (optional)
-    Returns: (str) link to access newly created channel
+    Returns: tuple (str, tree) link to access newly created channel, and the content tree including
+                               the resource IDs created for each content node during the upload process
     """
 
     # Set configuration settings
     config.UPDATE = update
-    config.COMPRESS = chef.get_setting("compress", False)
     config.VIDEO_HEIGHT = chef.get_setting("video-height", None)
     config.THUMBNAILS = chef.get_setting("thumbnails", False)
     config.STAGE = stage
@@ -79,9 +73,6 @@ def uploadchannel(  # noqa: C901
 
     config.DOWNLOAD_SESSION.auth = chef.auth
 
-    # Get domain to upload to
-    config.init_file_mapping_store()
-
     if not command == "dryrun":
         # Authenticate user and check current Ricecooker version
         username, token = authenticate_user(token)
@@ -96,49 +87,35 @@ def uploadchannel(  # noqa: C901
 
     config.LOGGER.info("\n\n***** Starting channel build process *****\n\n")
 
-    # Set up progress tracker
-    config.PROGRESS_MANAGER = RestoreManager()
-    if (
-        not resume or not config.PROGRESS_MANAGER.check_for_session()
-    ) and step.upper() != Status.DONE.name:
-        config.PROGRESS_MANAGER.init_session()
-    else:
-        if resume or prompt_yes_or_no(
-            "Previous session detected. Would you like to resume your last session?"
-        ):
-            config.LOGGER.info("Resuming your last session...")
-            step = Status.LAST.name if step is None else step
-            config.PROGRESS_MANAGER = config.PROGRESS_MANAGER.load_progress(
-                step.upper()
-            )
-        else:
-            config.PROGRESS_MANAGER.init_session()
-
     if hasattr(chef, "download_content"):
         chef.download_content()
 
     # TODO load csv if exists
     metadata_dict = chef.load_channel_metadata_from_csv()
 
-    # Construct channel if it hasn't been constructed already
-    if config.PROGRESS_MANAGER.get_status_val() <= Status.CONSTRUCT_CHANNEL.value:
-        config.LOGGER.info("Calling construct_channel... ")
-        channel = chef.construct_channel(**kwargs)
-        if "sample" in kwargs and kwargs["sample"]:
-            channel = select_sample_nodes(channel, size=kwargs["sample"])
-        config.PROGRESS_MANAGER.set_channel(channel)
-    channel = config.PROGRESS_MANAGER.channel
+    # Construct channel
+    config.LOGGER.info("Calling construct_channel... ")
+    channel = chef.construct_channel(**kwargs)
+    if "sample" in kwargs and kwargs["sample"]:
+        channel = select_sample_nodes(channel, size=kwargs["sample"])
 
-    # Set initial tree if it hasn't been set already
-    if config.PROGRESS_MANAGER.get_status_val() <= Status.CREATE_TREE.value:
-        config.PROGRESS_MANAGER.set_tree(create_initial_tree(channel))
-    tree = config.PROGRESS_MANAGER.tree
+    # Set initial tree
+    tree = create_initial_tree(channel)
 
-    # Download files if they haven't been downloaded already
-    if config.PROGRESS_MANAGER.get_status_val() <= Status.DOWNLOAD_FILES.value:
-        config.LOGGER.info("")
-        config.LOGGER.info("Downloading files...")
-        config.PROGRESS_MANAGER.set_files(*process_tree_files(tree))
+    # Early permission check: Try creating the channel before downloading/uploading files
+    # This will fail fast if the user lacks edit permissions
+    # Fixes issues #95 and #434 by avoiding wasted downloads/uploads
+    if command != "dryrun":
+        config.LOGGER.info("Checking channel permissions...")
+        try:
+            tree.root_id, tree.channel_id = tree.add_channel()
+        except Exception:
+            sys.exit(1)
+
+    # Download files
+    config.LOGGER.info("")
+    config.LOGGER.info("Downloading files...")
+    files_to_diff = process_tree_files(tree)
 
     # Apply any modifications to chef
     chef.apply_modifications(channel, metadata_dict)
@@ -151,43 +128,26 @@ def uploadchannel(  # noqa: C901
         config.LOGGER.info("Command is dryrun so we are not uploading channel.")
         return
 
-    # Set download manager in case steps were skipped
-    files_to_diff = config.PROGRESS_MANAGER.files_downloaded
-    config.FAILED_FILES = config.PROGRESS_MANAGER.files_failed
+    # Get file diff
+    config.LOGGER.info("")
+    config.LOGGER.info("Getting file diff...")
+    file_diff = get_file_diff(tree, files_to_diff)
 
-    # Get file diff if it hasn't been generated already
-    if config.PROGRESS_MANAGER.get_status_val() <= Status.GET_FILE_DIFF.value:
-        config.LOGGER.info("")
-        config.LOGGER.info("Getting file diff...")
-        config.PROGRESS_MANAGER.set_diff(get_file_diff(tree, files_to_diff))
-    file_diff = config.PROGRESS_MANAGER.file_diff
+    # Upload files
+    config.LOGGER.info("")
+    config.LOGGER.info("Uploading files...")
+    upload_files(tree, file_diff)
 
-    # Set which files have already been uploaded
-    tree.uploaded_files = config.PROGRESS_MANAGER.files_uploaded
-
-    # Upload files if they haven't been uploaded already
-    if config.PROGRESS_MANAGER.get_status_val() <= Status.UPLOADING_FILES.value:
-        config.LOGGER.info("")
-        config.LOGGER.info("Uploading files...")
-        config.PROGRESS_MANAGER.set_uploaded(upload_files(tree, file_diff))
-
-    # Create channel on Kolibri Studio if it hasn't been created already
-    if config.PROGRESS_MANAGER.get_status_val() <= Status.UPLOAD_CHANNEL.value:
-        config.LOGGER.info("")
-        config.LOGGER.info("Creating channel...")
-        config.PROGRESS_MANAGER.set_channel_created(*create_tree(tree))
-    channel_link = config.PROGRESS_MANAGER.channel_link
-    channel_id = config.PROGRESS_MANAGER.channel_id
+    # Create channel on Kolibri Studio
+    config.LOGGER.info("")
+    config.LOGGER.info("Creating channel...")
+    channel_link, channel_id = create_tree(tree)
 
     # Publish tree if flag is set to True
-    if (
-        config.PUBLISH
-        and config.PROGRESS_MANAGER.get_status_val() <= Status.PUBLISH_CHANNEL.value
-    ):
+    if config.PUBLISH:
         config.LOGGER.info("")
         config.LOGGER.info("Publishing channel...")
         publish_tree(tree, channel_id)
-        config.PROGRESS_MANAGER.set_published()
 
     # Open link on web browser (if specified) and return new link
     config.LOGGER.info("\n\nDONE: Channel created at {0}\n".format(channel_link))
@@ -198,8 +158,7 @@ def uploadchannel(  # noqa: C901
     if config.SLACK_WEBHOOK_URL:
         send_slack_notification(tree.channel, channel_link)
 
-    config.PROGRESS_MANAGER.set_done()
-    return channel_link
+    return (channel_link, tree)
 
 
 def authenticate_user(token):
@@ -267,6 +226,9 @@ def create_initial_tree(channel):
     config.LOGGER.info("   Setting up initial channel structure... ")
     tree = ChannelManager(channel)
 
+    # Must run before validate() materializes node_ids/content_ids (issue #354).
+    tree.deduplicate_shared_nodes()
+
     # Make sure channel structure is valid
     config.LOGGER.info("   Validating channel structure...")
     channel.print_tree()
@@ -279,13 +241,13 @@ def process_tree_files(tree):
     """process_tree_files: Download files from nodes
     Args:
         tree (ChannelManager): manager to handle communication to Kolibri Studio
-    Returns: None
+    Returns: list of files to check against Kolibri Studio
     """
     # Fill in values necessary for next steps
     config.LOGGER.info("Processing content...")
     files_to_diff = tree.process_tree()
     tree.check_for_files_failed()
-    return files_to_diff, config.FAILED_FILES
+    return files_to_diff
 
 
 def get_file_diff(tree, files_to_diff):
@@ -382,11 +344,21 @@ def select_sample_nodes(channel, size=10, seed=42):  # noqa: C901
     def attach(parent, node_path):
         if len(node_path) == 1:
             # leaf node
-            parent.add_child(node_path[0])
+            try:
+                parent.add_child(node_path[0])
+            except TypeError:
+                raise NotImplementedError(
+                    "--sample mode is not supported for channels with curriculum structure nodes"
+                )
         else:
             child = node_path[0]
             if not any(c.source_id == child.source_id for c in parent.children):
-                parent.add_child(child)
+                try:
+                    parent.add_child(child)
+                except TypeError:
+                    raise NotImplementedError(
+                        "--sample mode is not supported for channels with curriculum structure nodes"
+                    )
             attach(child, node_path[1:])
 
     for node_path in sample_paths:

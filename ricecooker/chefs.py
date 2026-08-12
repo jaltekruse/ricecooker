@@ -8,7 +8,10 @@ import sys
 from datetime import datetime
 from warnings import warn
 
-import requests
+from ricecooker.utils.pipeline import FilePipeline
+from ricecooker.utils.pipeline.exceptions import ExpectedFileException
+from ricecooker.utils.pipeline.exceptions import InvalidFileException
+from ricecooker.utils.request_utils import DomainSpecificAuth
 
 from . import config
 from .classes import files
@@ -16,8 +19,6 @@ from .classes import nodes
 from .commands import uploadchannel_wrapper
 from .exceptions import InvalidUsageException
 from .exceptions import raise_for_invalid_channel
-from .managers.progress import Status
-from .utils.downloader import get_archive_filename
 from .utils.jsontrees import build_tree_from_json
 from .utils.jsontrees import get_channel_node_from_json
 from .utils.jsontrees import read_tree_from_json
@@ -31,10 +32,6 @@ from .utils.metadata_provider import DEFAULT_EXERCISES_INFO_FILENAME
 from .utils.tokens import get_content_curation_token
 from .utils.youtube import YouTubePlaylistUtils
 from .utils.youtube import YouTubeVideoUtils
-from ricecooker.utils.images import convert_image
-from ricecooker.utils.pipeline import FilePipeline
-from ricecooker.utils.request_utils import DomainSpecificAuth
-
 
 # SUSHI CHEF BASE CLASS
 ################################################################################
@@ -49,12 +46,13 @@ class SushiChef(object):
 
     CHEF_RUN_DATA = config.CHEF_DATA_DEFAULT  # loaded from chefdata/chef_data.json
     TREES_DATA_DIR = config.TREES_DATA_DIR  # tree archives and JsonTreeChef inputs
-    DOMAIN_AUTH_HEADERS = (
-        {}
-    )  # dict of {domain: {header: env var name}} for requests auth
+    DOMAIN_AUTH_HEADERS = {}  # dict of {domain: {header: env var name}} for requests auth
     tree = None
 
     channel_node_class = nodes.ChannelNode
+
+    file_pipeline = None  # assigned a FilePipeline in run(); default lets node
+    # helpers fall back to a fresh pipeline when invoked outside a run.
 
     def __init__(self, *args, **kwargs):
         """
@@ -71,7 +69,7 @@ class SushiChef(object):
                 warning_text = "thumbnails setting is deprecated and will be replaced by thumbnails in version 0.8 please update"
                 config.LOGGER.warn(warning_text)
                 warn(warning_text, DeprecationWarning)
-                self.SETTINGS["thumbnails"] == self.SETTINGS[
+                self.SETTINGS["thumbnails"] = self.SETTINGS[
                     "generate-missing-thumbnails"
                 ]
 
@@ -79,7 +77,7 @@ class SushiChef(object):
                 warning_text = "compress-videos setting is deprecated and will be replaced by compress in version 0.8 please update"
                 config.LOGGER.warn(warning_text)
                 warn(warning_text, DeprecationWarning)
-                self.SETTINGS["compress"] == self.SETTINGS["compress-videos"]
+                self.SETTINGS["compress"] = self.SETTINGS["compress-videos"]
 
         # these will be assigned to later by the argparse handling.
         self.args = None
@@ -144,18 +142,6 @@ class SushiChef(object):
             type=int,
             default=3,
             help="Maximum number of times to retry downloading files.",
-        )
-        parser.add_argument(
-            "--resume",
-            action="store_true",
-            help="Resume chef session from a specified step.",
-        )
-        allsteps = [step.name.upper() for step in Status]
-        parser.add_argument(
-            "--step",
-            choices=allsteps,
-            default="LAST",
-            help="Step to resume progress from (use with the --resume).",
         )
         parser.add_argument(
             "--prompt",
@@ -442,9 +428,9 @@ class SushiChef(object):
                     if line_new_title != "":
                         metadata_dict[line_source_id]["New Title"] = line_new_title
                     if line_new_description != "":
-                        metadata_dict[line_source_id][
-                            "New Description"
-                        ] = line_new_description
+                        metadata_dict[line_source_id]["New Description"] = (
+                            line_new_description
+                        )
                     if line_new_tags != "":
                         tags_arr = re.split(",| ,", line_new_tags)
                         metadata_dict[line_source_id]["New Tags"] = tags_arr
@@ -497,12 +483,25 @@ class SushiChef(object):
         self.CHEF_RUN_DATA["current_run"] = run_id
         self.CHEF_RUN_DATA["runs"].append({"id": run_id})
 
-        self.file_pipeline = FilePipeline()
+        # Compression is opt-in via --compress; when set, derive the ffmpeg
+        # settings once and pass them through the pipeline's default context so
+        # every media file (standalone or inside an archive) is compressed
+        # consistently.
+        default_context = {}
+        if self.get_setting("compress", False):
+            default_context["video_settings"] = {
+                "crf": 32,
+                "max_height": self.get_setting("video-height") or 720,
+            }
+            default_context["audio_settings"] = {
+                "bit_rate": 96,
+            }
+        self.file_pipeline = FilePipeline(default_context=default_context)
         self.auth = DomainSpecificAuth(self.DOMAIN_AUTH_HEADERS)
         # TODO(Kevin): move self.download_content() call here
         self.pre_run(args, options)
-        uploadchannel_wrapper(self, args, options)
-        self.tree = config.PROGRESS_MANAGER.tree
+        result = uploadchannel_wrapper(self, args, options)
+        self.tree = result[1]
 
     def main(self):
         """
@@ -794,7 +793,6 @@ class YouTubeSushiChef(SushiChef):
         playlist_nodes = []
 
         for playlist_id in self.get_playlist_ids():
-
             playlist = YouTubePlaylistUtils(
                 id=playlist_id, cache_dir=self.YOUTUBE_CACHE_DIR
             )
@@ -840,35 +838,20 @@ class YouTubeSushiChef(SushiChef):
             return None
         video_source_id = "{0}-{1}".format(parent_id, video_details["id"])
 
-        # Check youtube thumbnail extension as some are not supported formats
+        # Download and convert the thumbnail through the pipeline. YouTube
+        # sometimes serves webp bytes under a .jpg URL; the CONVERT stage
+        # transcodes from actual content, so no bespoke Content-Type sniffing.
         thumbnail_link = video_details["thumbnail"]
         config.LOGGER.info("thumbnail = {}".format(thumbnail_link))
-        archive_filename = get_archive_filename(
-            thumbnail_link, download_root=self.ARCHIVE_DIR
-        )
-
-        dest_file = os.path.join(self.ARCHIVE_DIR, archive_filename)
-        os.makedirs(os.path.dirname(dest_file), exist_ok=True)
-        config.LOGGER.info("dest_file = {}".format(dest_file))
-
-        # Download and convert thumbnail, if necessary.
-        response = requests.get(thumbnail_link, stream=True)
-        # Some images that YT returns are actually webp despite their extension,
-        # so make sure we update our file extension to match.
-        if (
-            "Content-Type" in response.headers
-            and response.headers["Content-Type"] == "image/webp"
-        ):
-            base_path, ext = os.path.splitext(dest_file)
-            dest_file = base_path + ".webp"
-
-        if response.status_code == 200:
-            with open(dest_file, "wb") as f:
-                for chunk in response.iter_content(1024):
-                    f.write(chunk)
-
-            if dest_file.lower().endswith(".webp"):
-                dest_file = convert_image(dest_file)
+        pipeline = self.file_pipeline or FilePipeline()
+        try:
+            thumbnail_results = pipeline.execute(thumbnail_link)
+            dest_file = thumbnail_results[-1].path
+        except (InvalidFileException, ExpectedFileException) as e:
+            config.LOGGER.error(
+                "Unable to download thumbnail for {}: {}".format(video_id, e)
+            )
+            dest_file = None
 
         video_node = nodes.VideoNode(
             source_id=video_source_id,

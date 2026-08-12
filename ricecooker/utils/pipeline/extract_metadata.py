@@ -1,14 +1,14 @@
 from le_utils.constants import file_formats
 from le_utils.constants import format_presets
 
-from .file_handler import ExtensionMatchingHandler
-from .file_handler import StageHandler
+from ricecooker.utils.paths import extract_path_ext
 from ricecooker.utils.pipeline.context import ContentNodeMetadata
 from ricecooker.utils.pipeline.context import FileMetadata
-from ricecooker.utils.utils import extract_path_ext
 from ricecooker.utils.videos import extract_duration_of_media
 from ricecooker.utils.videos import guess_video_preset_by_resolution
 
+from .file_handler import ExtensionMatchingHandler
+from .file_handler import StageHandler
 
 PRESETS_FROM_EXTENSIONS = {
     file_formats.MP3: format_presets.AUDIO,
@@ -18,6 +18,7 @@ PRESETS_FROM_EXTENSIONS = {
     file_formats.BLOOMPUB: format_presets.BLOOMPUB,
     file_formats.BLOOMD: format_presets.BLOOMPUB,
     file_formats.HTML5: format_presets.HTML5_ZIP,
+    file_formats.HTML5_ARTICLE: format_presets.KPUB_ZIP,
 }
 
 KIND_FROM_PRESET = {p.id: p.kind for p in format_presets.PRESETLIST}
@@ -76,6 +77,10 @@ class BloomPubMetadataExtractor(MetadataExtractor):
     EXTENSIONS = {file_formats.BLOOMPUB, file_formats.BLOOMD}
 
 
+class KPUBMetadataExtractor(MetadataExtractor):
+    EXTENSIONS = {file_formats.HTML5_ARTICLE}
+
+
 class VideoMetadataExtractor(MediaMetadataExtractorMixin, MetadataExtractor):
     EXTENSIONS = {file_formats.MP4, file_formats.WEBM}
 
@@ -92,5 +97,6 @@ class ExtractMetadataStageHandler(StageHandler):
         H5PMetadataExtractor,
         HTML5MetadataExtractor,
         BloomPubMetadataExtractor,
+        KPUBMetadataExtractor,
         VideoMetadataExtractor,
     ]
