@@ -43,6 +43,7 @@ def render_page(
     # Flag names/values isolated here so a correction against the real binary
     # (unavailable in CI) is a one-spot change.
     command = ["single-file", url]
+
     if crawl_max_depth > 1:
         command += [
             "--crawl-links=true",
@@ -60,6 +61,16 @@ def render_page(
     # Single-page [output] positional guarantees a top-level index.html.
     command.append(index_path)
 
+    # TODO - review above, I think the way this is structured it will put the flags between the url and output filename
+    # and single-file will not like the structure of the call to the cli
+    command.append("--block-scripts=false")
+    command.append("--browser-wait-until")
+    command.append("networkidle2")
+    command.append("--browser-wait-delay")
+    command.append("5000")
+
+    
+    print(subprocess.list2cmdline(command))
     try:
         subprocess.check_output(command, stderr=subprocess.STDOUT, timeout=timeout)
     except FileNotFoundError:

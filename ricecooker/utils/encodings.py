@@ -14,6 +14,7 @@ DATA_URI_BASE64_REGEX = re.compile(
 # on every supported Python (e.g. image/webp is absent from stdlib mimetypes
 # before 3.11) rather than depending on the interpreter's mimetypes DB.
 _DATA_URI_EXTENSIONS = {
+    "application/javascript": "js",
     "image/png": "png",
     "image/jpeg": "jpg",
     "image/gif": "gif",
@@ -36,6 +37,8 @@ def get_base64_encoding(text):
 
 def get_base64_data_uri(text):
     """Match a base64 ``data:`` URI of any mimetype (group 1 = mimetype, group 2 = data), or None."""
+    #TODO - these data URIs can be quite large, this might be inefficient to run a regex over all of it
+    # might be better to match on just the first 500 chars or something
     return DATA_URI_BASE64_REGEX.match(text)
 
 

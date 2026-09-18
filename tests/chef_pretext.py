@@ -5,6 +5,7 @@ import re
 import tempfile
 
 import shutil
+import zipfile
 
 import le_utils
 import requests
@@ -21,7 +22,7 @@ from ricecooker.utils.caching import CacheControlAdapter
 from ricecooker.utils.caching import CacheForeverHeuristic
 from ricecooker.utils.caching import FileCache
 from ricecooker.utils.html import download_file
-from ricecooker.utils import html_writer, web
+from ricecooker.utils import archive_assets, html_writer, web
 
 from ricecooker.utils.pipeline import FilePipeline
 from ricecooker.utils.pipeline.convert import HTML5ConversionHandler
@@ -278,14 +279,32 @@ def download_depedency_zip_files(url, thumbnail, title):
     ###### tried recently around 4pm aug 11th
     pipeline = FilePipeline()
     file_metadata_list = pipeline.execute(url, skip_cache=True)
+    zip_path = file_metadata_list[0].path
+
+    pipeline = FilePipeline()
+    convert_stage = next(c for c in pipeline._children if c.STAGE == "CONVERT")
+    with tempfile.TemporaryDirectory() as tmpdir:
+        out_dir = tempfile.mkdtemp()
+        with zipfile.ZipFile(zip_path) as zf:
+            zf.extractall(out_dir)
+        try:
+            # with _fake_download_session(url_to_content) as fetched:
+            archive_assets.ArchiveProcessor(
+                out_dir, pipeline, convert_stage=convert_stage
+            ).process()
+            # yield out_dir, fetched
+        finally:
+            shutil.rmtree(out_dir, ignore_errors=True)
     print(file_metadata_list)
+    print("done")
 
     # handler = HTML5ConversionHandler()
     # new_file_metadata = handler.handle_file(url)
     ###### END tried recently around 4pm aug 11th
 
 
-    # Tested on Aug 11th around 7pm
+    # TODO - fixme
+    # this puts bytes of a zip in file called index.html
     # with html_writer.HTMLWriter(destpath + "/output.zip") as zipper:
     #     try:
     #         zipper.write_url(url, "index.html")
