@@ -54,7 +54,7 @@ sess.mount("https://", forever_adapter)
 
 dep_zip = None
 
-cache_invalidator_string = "                                                                           "
+cache_invalidator_string = "                                                                         "
 
 orig_urls_to_node_ids = {}
 
@@ -205,7 +205,7 @@ def download_book_page(url, thumbnail, title, sub_chap_number):
     #print("JASON DEBUG - #$%@#!$^#$%^^@#$%&^#$%%@$#%@#%$#@%@#$%@#$%@#$%@#$%@#$%@#$%@#$%#&&^(*(")
     #print(dep_zip_file.preset)
 
-    dep_file_reference = '/content/zipcontent/{}.zip/'.format(dep_zip_file.checksum)
+    dep_file_reference = '/zipcontent/{}.zip/'.format(dep_zip_file.checksum)
     assets_ref = './'
     pie_ref = '../../PIE/'
     for link in local_links:
