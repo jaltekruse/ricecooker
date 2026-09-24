@@ -11,8 +11,8 @@ from bs4 import BeautifulSoup
 
 from ricecooker.chefs import SushiChef
 from ricecooker.classes import licenses
-from ricecooker.classes.files import HTMLZipFile
-from ricecooker.classes.nodes import ChannelNode
+from ricecooker.classes.files import HTMLZipFile, VideoFile, WebVideoFile, YouTubeVideoFile
+from ricecooker.classes.nodes import ChannelNode, VideoNode
 from ricecooker.classes.nodes import HTML5AppNode
 from ricecooker.classes.nodes import TopicNode
 from ricecooker.config import LOGGER
@@ -31,8 +31,8 @@ from le_utils.constants import file_formats, format_presets
 SOURCE_DOMAIN = "https://runestone.academy/ns/books/published/FOPP-PIE/ThinkLikeComputer.html"
 # SOURCE_ID = "thinkcspi_runestone_academy"  # an alphanumeric ID refering to this channel
 # CHANNEL_TITLE = "How to Think Like a Computer Scientist, Interactive Edition"  # a humand-readbale title
-SOURCE_ID = "thinkcspy_runestone_academy_nov_20c"  # an alphanumeric ID refering to this channel
-CHANNEL_TITLE = "Nov 20th C WIP - How to Think Like a Computer Scientist, Interactive Edition"  # a humand-readbale title
+SOURCE_ID = "thinkcspy_runestone_academy_aug13_2026"  # an alphanumeric ID refering to this channel
+CHANNEL_TITLE = "Aug 13th 2026 WIP - How to Think Like a Computer Scientist, Interactive Edition"  # a humand-readbale title
 
 # youtube ids {'SGVgAV0v-Ww', 'Yxyx6KpKRzY', 'aqhREpceEMI', '3WgmLIsXFkI', '57dPVbnRouU', 'YK8QlIT3__M', 'xGSfiZt5cdw',
 # 'GCLHuPBtLdQ', 'Fd4a8ktQURc', 'blTBEqybQmQ', 'vNfCfowr-pQ', 'HriDtn-0Dcw', 'LD-F4RODy-I', '1uQM-TVlaMo', 'LZ7H1X8ar9E',
@@ -54,7 +54,7 @@ sess.mount("https://", forever_adapter)
 
 dep_zip = None
 
-cache_invalidator_string = "                                                                         "
+cache_invalidator_string = "                                                                           "
 
 orig_urls_to_node_ids = {}
 
@@ -82,10 +82,12 @@ def make_request(url, *args, **kwargs):
         LOGGER.warning("NOT CACHED: " + url)
     return response
 
+def parse_html(html):
+    return BeautifulSoup(html, features="html.parser", preserve_whitespace_tags=web.PRESERVE_WHITESPACE_TAGS)
 
 def get_parsed_html_from_url(url, *args, **kwargs):
     html = make_request(url, *args, **kwargs).content
-    return BeautifulSoup(html, "html.parser")
+    return parse_html(html)
 
 
 class WikipediaChef(SushiChef):
@@ -149,22 +151,40 @@ def add_subpages_from_pretext_toc(channel, list_url):
             #sub_chapter_topic = TopicNode(source_id=sub_chapter.findNext("a").attrs["href"], title=sub_chap_title)
             # chapter_topic.add_child(sub_chapter_topic)
 
-            if True or "2.2" in sub_chap_title or "2.3" in sub_chap_title or "2.4" in sub_chap_title:
+            # if "2.2" in sub_chap_title or "2.3" in sub_chap_title or "2.4" in sub_chap_title:
+            if "2.4" in sub_chap_title:
             # if "1." in sub_chap_title or "2." in sub_chap_title or "3." in sub_chap_title:
                 sub_chap_url = DOMAIN + list(sub_chapter.find_all("a", recursive="False"))[0].attrs["href"]
                 if dep_zip is None:
                     download_depedency_zip_files(sub_chap_url, thumbnail=None, title=sub_chap_title)
-                html5app = download_book_page(sub_chap_url, thumbnail=None, title=sub_chap_title)
+                html5app = download_book_page(sub_chap_url, thumbnail=None, title=sub_chap_title, sub_chap_number=sub_chap_number)
                 if not chapter_summary_node_added:
                     # add a page for the chapter overview, to give us a place to link to for that entry in the table of contents
-                    chapter_html5app = download_book_page(chapter_summary_url, thumbnail=None, title=title)
-                    chapter_topic.add_child(chapter_html5app)
+                    chapter_html5app = download_book_page(chapter_summary_url, thumbnail=None, title=title, sub_chap_number=sub_chap_number)
+                    chapter_topic.add_child(chapter_html5app[0])
                     chapter_summary_node_added = True
-                chapter_topic.add_child(html5app)
+                
+                chapter_topic.add_child(html5app[0])
+
+                for extra in html5app[1]:
+                    chapter_topic.add_child(extra)
+
 
         channel.add_child(chapter_topic)
 
-def download_book_page(url, thumbnail, title):
+
+def find_file_matching_pattern(root_directory, regex_pattern):
+    compiled_regex = re.compile(regex_pattern)
+
+    # os.walk travels through all subdirectories automatically
+    for root, dirs, files in os.walk(root_directory):
+        for filename in files:
+            if compiled_regex.search(filename):
+                # Construct the relative path to the file
+                full_path = os.path.join(root, filename)
+                return full_path 
+
+def download_book_page(url, thumbnail, title, sub_chap_number):
     destpath = tempfile.mkdtemp()
 
     archive_page(url, destpath, skip_static_asset_download=True)
@@ -217,9 +237,52 @@ def download_book_page(url, thumbnail, title):
         new_html = new_html.replace("href=\"" + orig_url,
                                     "onClick=\"window.kolibri.navigateTo('{}')"
                                     .format(orig_urls_to_node_ids[orig_url]))
+        
+    extra_content = []
 
-    youtube_codes.extend(re.findall(r"youtube.*/embed/(.*)\?", new_html))
+    page = parse_html(new_html)
+    all_videos = page.find_all("iframe", class_="video")
+    if (all_videos):
+        for video in all_videos:
+            # preset must be set if preset and default_preset isn't specified when creating WebVideoFile object for file 44543976d529bb1a7bdbe99fdcbddab3.html (simple-python-data_variables.html)
+
+            # https://www.youtube-nocookie.com/embed/LZ7H1X8ar9E?&amp;modestbranding=1&amp;rel=0
+            video_id = re.search(r".*embed/(.*)\?.*", video.attrs['src']).group(1)
+            regular_youtube_url = "https://www.youtube.com/watch?v=" + video_id
+            video_file = find_file_matching_pattern("/home/jason/scraping_sites/aYoutubeVidsForKolibri", f".*{video_id}.*")
+            video_title = f"Video - {sub_chap_number} - " + re.search(r".*YouTube_(.*)_Media_.*", video_file).group(1)
+            wvf = VideoFile(path=video_file, preset=format_presets.VIDEO_LOW_RES, source_url=regular_youtube_url)
+            copyright = "Brad Miller, Paul Resnick, Lauren Murphy, Jeffrey Elkner, Peter Wentworth, Allen B. Downey, Chris Meyers, and Dario Mitchell."
+            node = VideoNode(source_id=video_id, title=video_title, 
+                            license=licenses.SpecialPermissionsLicense(
+                                description="GNU Free Documentation License - Version 1.3",
+                                copyright_holder=copyright),
+                            copyright_holder=copyright,
+                            files=[wvf])
+            extra_content.append(node)
+            # if we are on the second pass and have nodeIDs from uploading the first time
+            # replace the youtube embedd with a link to the video in the Kolibri tree
+            if (orig_urls_to_node_ids):
+                new_video_link = page.new_tag("button", attrs={"onClick": 
+                            f"window.kolibri.navigateTo('{orig_urls_to_node_ids[video_id]}')"})
+                new_video_link.string = video_title
+                video.replace_with(new_video_link)
+
+        
+        print(extra_content)
+                
+    # other URLs above
+    # TODO - use beautifulSoup to parse the page and replace the youtube embed with something, a link, maybe a generic
+    # image that looks like a video with a play button, that will link to the resource for each video.
+
+    # will also need to upload the video as a resource, and put the link in the doc on the second pass, as is done with
+    # other URLs above
+
+    page_youtube_codes = re.findall(r"youtube.*/embed/(.*)\?", new_html)
+    youtube_codes.extend(page_youtube_codes)
     #print(new_html)
+
+    new_html = page.prettify()
 
     # isolate the index.html it it's own folder, all resources should now be coming out of the dep zip
     new_dest = destpath + "/PRETEXT_INDEX_ALONE_" + os.path.basename(destpath)
@@ -249,7 +312,13 @@ def download_book_page(url, thumbnail, title):
         license=licenses.SpecialPermissionsLicense(copyright_holder="Brad Miller, Paul Resnick, Lauren Murphy, Jeffrey Elkner, Peter Wentworth, Allen B. Downey, Chris Meyers, and Dario Mitchell.",
                                                    description="GNU Free Documentation License - Version 1.3")
     )
-    return html5app
+
+    # return a tuple, first element is the main section ot add, the second element of the tuple is another tuple with
+    # a series of supplemntary resources that should be added to the same parent, but at the end of all of the regular sections
+    # TODO - determine if having them in-order after the section is right, I think creating a no-leaf node for pages is likely
+    # the wrong design
+    return (html5app, extra_content)
+    #return html5app
 
 def download_depedency_zip_files(url, thumbnail, title):
 
