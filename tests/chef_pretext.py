@@ -111,14 +111,9 @@ class WikipediaChef(SushiChef):
             source_id=SOURCE_ID,
             title=CHANNEL_TITLE,
             description=
-            """
-            A concise introduction to software design using the Python programming language. Intended for people with no programming experience, this book starts with the most basic concepts and gradually adds new material. Some of the ideas students find most challenging, like recursion and object-oriented programming, are divided into a sequence of smaller steps and introduced over the course of several chapters.
-
-            This edition of the book is written in PreTeXt and features embedded Python programming problems that can be completed right in the browser, thanks to the work of Brad Miller and the rest of the contributors to the Runestone Academy platform.
-
-            This description is an edited version of the one posted on the Open Textbook Library.
-            https://open.umn.edu/opentextbooks/textbooks/think-python-how-to-think-like-a-computer-scientist
-            """,
+                ("A concise introduction to software design using the Python programming language. "
+                "Intended for people with no programming experience, this book starts with the most "
+                "basic concepts and gradually adds new material."),
             thumbnail="https://python.camden.rutgers.edu/python_resources/python3_book/_images/gasp_lessons.png",
             license=license,
             copyright_holder=copyright,
@@ -139,9 +134,9 @@ class WikipediaChef(SushiChef):
     def construct_channel(self, *args, **kwargs):
 
         channel = self.get_channel(**kwargs)
-        add_subpages_from_pretext_toc(
-            channel, DOMAIN + "thinkcspy-3.html"
-        )
+        # add_subpages_from_pretext_toc(
+        #     channel, DOMAIN + "thinkcspy-3.html"
+        # )
 
         # potato_topic = TopicNode(
         #     source_id="List_of_potato_cultivars", title="Potatoes!"
