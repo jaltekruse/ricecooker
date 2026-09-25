@@ -134,9 +134,9 @@ class WikipediaChef(SushiChef):
     def construct_channel(self, *args, **kwargs):
 
         channel = self.get_channel(**kwargs)
-        # add_subpages_from_pretext_toc(
-        #     channel, DOMAIN + "thinkcspy-3.html"
-        # )
+        add_subpages_from_pretext_toc(
+            channel, DOMAIN + "thinkcspy-3.html"
+        )
 
         # potato_topic = TopicNode(
         #     source_id="List_of_potato_cultivars", title="Potatoes!"
