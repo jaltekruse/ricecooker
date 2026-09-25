@@ -26,13 +26,26 @@ from ricecooker.utils import downloader, web
 from ricecooker.utils.zip import create_predictable_zip
 from le_utils.constants import file_formats, format_presets
 
+from le_utils.constants.labels import accessibility_categories
+from le_utils.constants.labels import learning_activities
+from le_utils.constants.labels import levels
+from le_utils.constants.labels import needs
+from le_utils.constants.labels import resource_type
+from le_utils.constants.labels import subjects
+
 
 # CHANNEL SETTINGS
 SOURCE_DOMAIN = "https://runestone.academy/ns/books/published/FOPP-PIE/ThinkLikeComputer.html"
 # SOURCE_ID = "thinkcspi_runestone_academy"  # an alphanumeric ID refering to this channel
 # CHANNEL_TITLE = "How to Think Like a Computer Scientist, Interactive Edition"  # a humand-readbale title
-SOURCE_ID = "thinkcspy_runestone_academy_aug13_2026"  # an alphanumeric ID refering to this channel
-CHANNEL_TITLE = "Aug 13th 2026 WIP - How to Think Like a Computer Scientist, Interactive Edition"  # a humand-readbale title
+SOURCE_ID = "thinkcspy_runestone_academy_sept24_2026"  # an alphanumeric ID refering to this channel
+CHANNEL_TITLE = "How to Think Like a Computer Scientist, Interactive Edition"  # a humand-readbale title
+
+copyright = "Brad Miller, Paul Resnick, Lauren Murphy, Jeffrey Elkner, Peter Wentworth, Allen B. Downey, Chris Meyers, and Dario Mitchell."
+license = licenses.SpecialPermissionsLicense(
+                    description="GNU Free Documentation License - Version 1.3",
+                    copyright_holder=copyright)
+license_description="GNU Free Documentation License - Version 1.3"
 
 # youtube ids {'SGVgAV0v-Ww', 'Yxyx6KpKRzY', 'aqhREpceEMI', '3WgmLIsXFkI', '57dPVbnRouU', 'YK8QlIT3__M', 'xGSfiZt5cdw',
 # 'GCLHuPBtLdQ', 'Fd4a8ktQURc', 'blTBEqybQmQ', 'vNfCfowr-pQ', 'HriDtn-0Dcw', 'LD-F4RODy-I', '1uQM-TVlaMo', 'LZ7H1X8ar9E',
@@ -97,8 +110,28 @@ class WikipediaChef(SushiChef):
             source_domain=SOURCE_DOMAIN,
             source_id=SOURCE_ID,
             title=CHANNEL_TITLE,
-            thumbnail="https://lh3.googleusercontent.com/zwwddqxgFlP14DlucvBV52RUMA-cV3vRvmjf-iWqxuVhYVmB-l8XN9NDirb0687DSw=w300",
+            description=
+            """
+            A concise introduction to software design using the Python programming language. Intended for people with no programming experience, this book starts with the most basic concepts and gradually adds new material. Some of the ideas students find most challenging, like recursion and object-oriented programming, are divided into a sequence of smaller steps and introduced over the course of several chapters.
+
+            This edition of the book is written in PreTeXt and features embedded Python programming problems that can be completed right in the browser, thanks to the work of Brad Miller and the rest of the contributors to the Runestone Academy platform.
+
+            This description is an edited version of the one posted on the Open Textbook Library.
+            https://open.umn.edu/opentextbooks/textbooks/think-python-how-to-think-like-a-computer-scientist
+            """,
+            thumbnail="https://python.camden.rutgers.edu/python_resources/python3_book/_images/gasp_lessons.png",
+            license=license,
+            copyright_holder=copyright,
+            license_description=license_description,
             language=CHANNEL_LANGUAGE,
+            provider="Runestone Academy",
+            categories=[subjects.COMPUTER_SCIENCE],
+            grade_levels=[
+                levels.LOWER_SECONDARY,
+                levels.UPPER_SECONDARY,
+                levels.PROFESSIONAL,
+                levels.TERTIARY
+            ]
         )
 
         return channel
@@ -152,7 +185,7 @@ def add_subpages_from_pretext_toc(channel, list_url):
             # chapter_topic.add_child(sub_chapter_topic)
 
             # if "2.2" in sub_chap_title or "2.3" in sub_chap_title or "2.4" in sub_chap_title:
-            if "2.4" in sub_chap_title:
+            if "4.7" in sub_chap_title:
             # if "1." in sub_chap_title or "2." in sub_chap_title or "3." in sub_chap_title:
                 sub_chap_url = DOMAIN + list(sub_chapter.find_all("a", recursive="False"))[0].attrs["href"]
                 if dep_zip is None:
@@ -200,12 +233,12 @@ def download_book_page(url, thumbnail, title, sub_chap_number):
     links_to_replace = {}
 
     global dep_zip
-    dep_zip_file = HTMLZipFile(dep_zip, preset=le_utils.constants.format_presets.HTML5_DEPENDENCY_ZIP)
+    dep_zip_file = HTMLZipFile(dep_zip, preset=format_presets.HTML5_DEPENDENCY_ZIP)
     #dep_zip_file.preset = le_utils.constants.format_presets.HTML5_DEPENDENCY_ZIP
     #print("JASON DEBUG - #$%@#!$^#$%^^@#$%&^#$%%@$#%@#%$#@%@#$%@#$%@#$%@#$%@#$%@#$%@#$%#&&^(*(")
     #print(dep_zip_file.preset)
 
-    dep_file_reference = '/zipcontent/{}.zip/'.format(dep_zip_file.checksum)
+    dep_file_reference = '/content/zipcontent/{}.zip/'.format(dep_zip_file.checksum)
     assets_ref = './'
     pie_ref = '../../PIE/'
     for link in local_links:
@@ -243,31 +276,41 @@ def download_book_page(url, thumbnail, title, sub_chap_number):
     page = parse_html(new_html)
     all_videos = page.find_all("iframe", class_="video")
     if (all_videos):
+
+        all_video_boxes = page.find_all("div", class_="video-box")
+        for video_box_div in all_video_boxes:
+            video_box_div['style'] = ""
+
         for video in all_videos:
             # preset must be set if preset and default_preset isn't specified when creating WebVideoFile object for file 44543976d529bb1a7bdbe99fdcbddab3.html (simple-python-data_variables.html)
 
             # https://www.youtube-nocookie.com/embed/LZ7H1X8ar9E?&amp;modestbranding=1&amp;rel=0
             video_id = re.search(r".*embed/(.*)\?.*", video.attrs['src']).group(1)
             regular_youtube_url = "https://www.youtube.com/watch?v=" + video_id
-            video_file = find_file_matching_pattern("/home/jason/scraping_sites/aYoutubeVidsForKolibri", f".*{video_id}.*")
+            #the tool I used to download the videos I guess decided to replace double underscores in video IDs with single underscores?
+            video_id_modified = video_id.replace("__", "_")
+            video_file = find_file_matching_pattern("/home/jason/scraping_sites/aYoutubeVidsForKolibri", f".*{video_id_modified}.*")
             video_title = f"Video - {sub_chap_number} - " + re.search(r".*YouTube_(.*)_Media_.*", video_file).group(1)
             wvf = VideoFile(path=video_file, preset=format_presets.VIDEO_LOW_RES, source_url=regular_youtube_url)
-            copyright = "Brad Miller, Paul Resnick, Lauren Murphy, Jeffrey Elkner, Peter Wentworth, Allen B. Downey, Chris Meyers, and Dario Mitchell."
             node = VideoNode(source_id=video_id, title=video_title, 
-                            license=licenses.SpecialPermissionsLicense(
-                                description="GNU Free Documentation License - Version 1.3",
-                                copyright_holder=copyright),
+                            license=license,
                             copyright_holder=copyright,
+                            license_description=license_description,
                             files=[wvf])
             extra_content.append(node)
             # if we are on the second pass and have nodeIDs from uploading the first time
             # replace the youtube embedd with a link to the video in the Kolibri tree
             if (orig_urls_to_node_ids):
+                on_click = f"window.kolibri.navigateTo('{orig_urls_to_node_ids[video_id]}')"
                 new_video_link = page.new_tag("button", attrs={"onClick": 
-                            f"window.kolibri.navigateTo('{orig_urls_to_node_ids[video_id]}')"})
+                            on_click})
                 new_video_link.string = video_title
+                video_placeholder_img = page.new_tag("img", attrs={
+                    "src": dep_file_reference + "video_placeholder.png", "onClick": on_click,
+                    "style": "max-width:100%"})
+                video.insert_before(video_placeholder_img)
+                video.insert_before(page.new_tag("br"))
                 video.replace_with(new_video_link)
-
         
         print(extra_content)
                 
@@ -302,15 +345,14 @@ def download_book_page(url, thumbnail, title, sub_chap_number):
         title=title,
         thumbnail=thumbnail,
         source_id=url.split("/")[-1],
-        # license=None
         # getting a weird failure when I try to set a license
         # ricecooker.exceptions.InvalidNodeException: 2 - Euclidean Vectors (EV) (HTML5AppNode): 1 file: License is not a license object
         # in the debugger I'm confused, __bases__ shows this license object inherits from
         # (<class 'ricecooker.classes.licenses.License'>,), which appears to be the class it is checking for? but isinstance returns false
         # TODO JASON - seems like this assertion needs updating, it complains even if I have this, need to put it in the license itself below
-        license_description="GNU Free Documentation License - Version 1.3",
-        license=licenses.SpecialPermissionsLicense(copyright_holder="Brad Miller, Paul Resnick, Lauren Murphy, Jeffrey Elkner, Peter Wentworth, Allen B. Downey, Chris Meyers, and Dario Mitchell.",
-                                                   description="GNU Free Documentation License - Version 1.3")
+        license=license,
+        copyright_holder=copyright,
+        license_description=license_description
     )
 
     # return a tuple, first element is the main section ot add, the second element of the tuple is another tuple with
@@ -366,6 +408,8 @@ def download_depedency_zip_files(url, thumbnail, title):
 
     # TODO Jason likely bring this back?
     #os.remove(destpath + "/index.html")
+
+    shutil.copy("/home/jason/scraping_sites/aYoutubeVidsForKolibri/video_placeholder.png", destpath)
 
     f = open(destpath + "/index.html", "wb")
     global cache_invalidator_string
