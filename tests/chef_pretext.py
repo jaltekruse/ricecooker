@@ -38,7 +38,7 @@ from le_utils.constants.labels import subjects
 SOURCE_DOMAIN = "https://runestone.academy/ns/books/published/FOPP-PIE/ThinkLikeComputer.html"
 # SOURCE_ID = "thinkcspi_runestone_academy"  # an alphanumeric ID refering to this channel
 # CHANNEL_TITLE = "How to Think Like a Computer Scientist, Interactive Edition"  # a humand-readbale title
-SOURCE_ID = "thinkcspy_runestone_academy_sept24_2026"  # an alphanumeric ID refering to this channel
+SOURCE_ID = "thinkcspy_runestone_academy_sept29_test_2026"  # an alphanumeric ID refering to this channel
 CHANNEL_TITLE = "How to Think Like a Computer Scientist, Interactive Edition"  # a humand-readbale title
 
 copyright = "Brad Miller, Paul Resnick, Lauren Murphy, Jeffrey Elkner, Peter Wentworth, Allen B. Downey, Chris Meyers, and Dario Mitchell."
@@ -146,6 +146,8 @@ class WikipediaChef(SushiChef):
         #     potato_topic, "https://en.wikipedia.org/wiki/List_of_potato_cultivars"
         # )
 
+        raise "exit early please"
+
         return channel
 
 
@@ -180,7 +182,7 @@ def add_subpages_from_pretext_toc(channel, list_url):
             # chapter_topic.add_child(sub_chapter_topic)
 
             # if "2.2" in sub_chap_title or "2.3" in sub_chap_title or "2.4" in sub_chap_title:
-            if "4.7" in sub_chap_title:
+            if "4." in sub_chap_title:
             # if "1." in sub_chap_title or "2." in sub_chap_title or "3." in sub_chap_title:
                 sub_chap_url = DOMAIN + list(sub_chapter.find_all("a", recursive="False"))[0].attrs["href"]
                 if dep_zip is None:
@@ -214,19 +216,9 @@ def find_file_matching_pattern(root_directory, regex_pattern):
 
 def download_book_page(url, thumbnail, title, sub_chap_number):
     destpath = tempfile.mkdtemp()
+    extra_content = []
 
-    archive_page(url, destpath, skip_static_asset_download=True)
-    #archive_page(url, destpath)
-
-    # mathjax_dest = destpath + "/cdn.jsdelivr.net/npm/mathjax@3/"
-    # shutil.rmtree(mathjax_dest + "es5")
-    # shutil.copytree("/home/jason/src/MathJax/es5", mathjax_dest + "/es5")
     index_path = destpath + "/index.html"
-    parser = web.HTMLParser(index_path)
-
-    local_links = parser.get_links()
-    links_to_replace = {}
-
     global dep_zip
     dep_zip_file = HTMLZipFile(dep_zip, preset=format_presets.HTML5_DEPENDENCY_ZIP)
     #dep_zip_file.preset = le_utils.constants.format_presets.HTML5_DEPENDENCY_ZIP
@@ -236,24 +228,84 @@ def download_book_page(url, thumbnail, title, sub_chap_number):
     dep_file_reference = '/content/zipcontent/{}.zip/'.format(dep_zip_file.checksum)
     assets_ref = './'
     pie_ref = '../../PIE/'
-    for link in local_links:
-        # if pie_ref in link:
-            # content_info['needs_dep_zip'] = True
-            # dep_zip_pie_ref = '{}/PIE/'.format(os.path.basename(dep_zip))
-            # links_to_replace[pie_ref] = dep_zip_pie_ref
-        if link.startswith(assets_ref):
-            # content_info['needs_dep_zip'] = True
-            dep_zip_assets_ref = dep_file_reference + link[2:]
-            links_to_replace[link] = dep_zip_assets_ref
 
-        # find and patch any Three.js references in the sources that are not part of the PIE package.
-        # elif 'three.js' in link.lower() or 'three.min.js' in link.lower():
-        #     # print("Three.js link found: {}".format(link))
-        #     full_path = os.path.join(os.path.dirname(html_file_path), link)
-        #     if os.path.exists(full_path):
-        #         self.patch_three_js(full_path)
+    def replace_links(soup):
+        parser = web.HTMLParser(index_path)
 
-    new_html = parser.replace_links(links_to_replace)
+        local_links = parser.get_links_in_parsed(soup, index_path)
+        links_to_replace = {}
+
+        for link in local_links:
+            # if pie_ref in link:
+                # content_info['needs_dep_zip'] = True
+                # dep_zip_pie_ref = '{}/PIE/'.format(os.path.basename(dep_zip))
+                # links_to_replace[pie_ref] = dep_zip_pie_ref
+            if link.startswith(assets_ref):
+                # content_info['needs_dep_zip'] = True
+                dep_zip_assets_ref = dep_file_reference + link[2:]
+                links_to_replace[link] = dep_zip_assets_ref
+
+            # find and patch any Three.js references in the sources that are not part of the PIE package.
+            # elif 'three.js' in link.lower() or 'three.min.js' in link.lower():
+            #     # print("Three.js link found: {}".format(link))
+            #     full_path = os.path.join(os.path.dirname(html_file_path), link)
+            #     if os.path.exists(full_path):
+            #         self.patch_three_js(full_path)
+
+
+        page = soup
+        all_videos = page.find_all("iframe", class_="video")
+        if (all_videos):
+
+            all_video_boxes = page.find_all("div", class_="video-box")
+            for video_box_div in all_video_boxes:
+                video_box_div['style'] = ""
+
+            for video in all_videos:
+                # preset must be set if preset and default_preset isn't specified when creating WebVideoFile object for file 44543976d529bb1a7bdbe99fdcbddab3.html (simple-python-data_variables.html)
+
+                # https://www.youtube-nocookie.com/embed/LZ7H1X8ar9E?&amp;modestbranding=1&amp;rel=0
+                video_id = re.search(r".*embed/(.*)\?.*", video.attrs['src']).group(1)
+                regular_youtube_url = "https://www.youtube.com/watch?v=" + video_id
+                #the tool I used to download the videos I guess decided to replace double underscores in video IDs with single underscores?
+                video_id_modified = video_id.replace("__", "_")
+                video_file = find_file_matching_pattern("/home/jason/scraping_sites/aYoutubeVidsForKolibri", f".*{video_id_modified}.*")
+                video_title = f"Video - {sub_chap_number} - " + re.search(r".*YouTube_(.*)_Media_.*", video_file).group(1)
+                wvf = VideoFile(path=video_file, preset=format_presets.VIDEO_LOW_RES, source_url=regular_youtube_url)
+                node = VideoNode(source_id=video_id, title=video_title, 
+                                license=license,
+                                copyright_holder=copyright,
+                                license_description=license_description,
+                                files=[wvf])
+                extra_content.append(node)
+                # if we are on the second pass and have nodeIDs from uploading the first time
+                # replace the youtube embedd with a link to the video in the Kolibri tree
+                if (orig_urls_to_node_ids):
+                    on_click = f"window.kolibri.navigateTo('{orig_urls_to_node_ids[video_id]}')"
+                    new_video_link = page.new_tag("button", attrs={"onClick": 
+                                on_click})
+                    new_video_link.string = video_title
+                    video_placeholder_img = page.new_tag("img", attrs={
+                        "src": dep_file_reference + "video_placeholder.png", "onClick": on_click,
+                        "style": "max-width:100%"})
+                    video.insert_before(video_placeholder_img)
+                    video.insert_before(page.new_tag("br"))
+                    video.replace_with(new_video_link)
+            
+            print(extra_content)
+
+        return parser.replace_links_in_parsed(links_to_replace, soup, index_path)
+
+    archive_page(url, destpath, skip_static_asset_download=True, final_link_replacement=replace_links)
+    #archive_page(url, destpath)
+
+    # mathjax_dest = destpath + "/cdn.jsdelivr.net/npm/mathjax@3/"
+    # shutil.rmtree(mathjax_dest + "es5")
+    # shutil.copytree("/home/jason/src/MathJax/es5", mathjax_dest + "/es5")
+
+    
+    with open(index_path, 'r', encoding='utf-8') as file:
+        new_html = file.read()
 
     # TODO Jason - very hack just trying to get pretext working
     # this is for custom data attributes on some tags that are interpreted as URLs by PreteXt javascript
@@ -266,49 +318,7 @@ def download_book_page(url, thumbnail, title, sub_chap_number):
                                     "onClick=\"window.kolibri.navigateTo('{}')"
                                     .format(orig_urls_to_node_ids[orig_url]))
         
-    extra_content = []
-
-    page = parse_html(new_html)
-    all_videos = page.find_all("iframe", class_="video")
-    if (all_videos):
-
-        all_video_boxes = page.find_all("div", class_="video-box")
-        for video_box_div in all_video_boxes:
-            video_box_div['style'] = ""
-
-        for video in all_videos:
-            # preset must be set if preset and default_preset isn't specified when creating WebVideoFile object for file 44543976d529bb1a7bdbe99fdcbddab3.html (simple-python-data_variables.html)
-
-            # https://www.youtube-nocookie.com/embed/LZ7H1X8ar9E?&amp;modestbranding=1&amp;rel=0
-            video_id = re.search(r".*embed/(.*)\?.*", video.attrs['src']).group(1)
-            regular_youtube_url = "https://www.youtube.com/watch?v=" + video_id
-            #the tool I used to download the videos I guess decided to replace double underscores in video IDs with single underscores?
-            video_id_modified = video_id.replace("__", "_")
-            video_file = find_file_matching_pattern("/home/jason/scraping_sites/aYoutubeVidsForKolibri", f".*{video_id_modified}.*")
-            video_title = f"Video - {sub_chap_number} - " + re.search(r".*YouTube_(.*)_Media_.*", video_file).group(1)
-            wvf = VideoFile(path=video_file, preset=format_presets.VIDEO_LOW_RES, source_url=regular_youtube_url)
-            node = VideoNode(source_id=video_id, title=video_title, 
-                            license=license,
-                            copyright_holder=copyright,
-                            license_description=license_description,
-                            files=[wvf])
-            extra_content.append(node)
-            # if we are on the second pass and have nodeIDs from uploading the first time
-            # replace the youtube embedd with a link to the video in the Kolibri tree
-            if (orig_urls_to_node_ids):
-                on_click = f"window.kolibri.navigateTo('{orig_urls_to_node_ids[video_id]}')"
-                new_video_link = page.new_tag("button", attrs={"onClick": 
-                            on_click})
-                new_video_link.string = video_title
-                video_placeholder_img = page.new_tag("img", attrs={
-                    "src": dep_file_reference + "video_placeholder.png", "onClick": on_click,
-                    "style": "max-width:100%"})
-                video.insert_before(video_placeholder_img)
-                video.insert_before(page.new_tag("br"))
-                video.replace_with(new_video_link)
-        
-        print(extra_content)
-                
+ 
     # other URLs above
     # TODO - use beautifulSoup to parse the page and replace the youtube embed with something, a link, maybe a generic
     # image that looks like a video with a play button, that will link to the resource for each video.
@@ -320,7 +330,7 @@ def download_book_page(url, thumbnail, title, sub_chap_number):
     youtube_codes.extend(page_youtube_codes)
     #print(new_html)
 
-    new_html = page.prettify()
+    # new_html = page
 
     # isolate the index.html it it's own folder, all resources should now be coming out of the dep zip
     new_dest = destpath + "/PRETEXT_INDEX_ALONE_" + os.path.basename(destpath)

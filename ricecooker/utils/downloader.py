@@ -14,11 +14,11 @@ from urllib.request import url2pathname
 
 import chardet
 import requests
-import selenium.webdriver.support.ui as selenium_ui
-from bs4 import BeautifulSoup
+#import selenium.webdriver.support.ui as selenium_ui
+from bs4 import BeautifulSoup, SoupStrainer
 from cachecontrol.caches.file_cache import FileCache
 from requests_file import FileAdapter
-from selenium import webdriver
+#from selenium import webdriver
 
 from ricecooker.config import LOGGER
 from ricecooker.config import PHANTOMJS_PATH
@@ -132,6 +132,24 @@ try:  # noqa: C901
     USE_PYPPETEER = True
 except BaseException:
     print("Unable to load pyppeteer, using phantomjs for JS loading.")
+
+
+
+def parse_html(doc):
+    print("Parse HTML")
+    def custom_strainer_filter(tag_name, attrs):
+        # Include specific tag names
+        if tag_name in ['link', 'script','a','style', 'img', 'source', 'iframe']:
+            return True
+                
+        # Include any tag with 'background-image' inside its style attribute
+        if 'style' in attrs and 'background-image' in attrs['style']:
+            return True
+            
+        return False
+
+    only_tags = SoupStrainer(custom_strainer_filter)
+    return BeautifulSoup(doc, features="lxml", preserve_whitespace_tags=web.PRESERVE_WHITESPACE_TAGS, parse_only=only_tags)
 
 
 def read(
@@ -262,7 +280,7 @@ _CSS_URL_RE = re.compile(r"url\(['\"]?(.*?)['\"]?\)")
 _CSS_IMPORT_RE = re.compile(r"@import['\"](.*?)['\"]")
 
 # TODO(davidhu): Use MD5 hash of URL (ideally file) instead.
-def _derive_filename(url, destination):
+def _derive_filename(url, destination, skip_static_asset_download=False):
     name = os.path.basename(urlparse(url).path).replace("%", "_")
     orig_ret = ("%s.%s" % (uuid.uuid4().hex, name)).lower()
     filename = orig_ret
@@ -283,7 +301,8 @@ def _derive_filename(url, destination):
         # in subdirectories created in the downloaded version. This ensures multiple instances of extensionless
         # resources referenced from a page won't clobber each other.
         filename = filename + "/index{}".format(ext)
-        os.makedirs(os.path.join(destination, subpath), exist_ok=True)
+        if (not skip_static_asset_download):
+            os.makedirs(os.path.join(destination, subpath), exist_ok=True)
 
     return filename
 
@@ -341,7 +360,7 @@ def download_static_assets(  # noqa: C901
     LOGGER.debug("base_url = {}".format(base_url))
 
     if not isinstance(doc, BeautifulSoup):
-        doc = BeautifulSoup(doc, features="lxml", preserve_whitespace_tags=web.PRESERVE_WHITESPACE_TAGS)
+        doc = parse_html(doc)
 
     def download_srcset(selector, attr, content_middleware=None):
         nodes = doc.select(selector)
@@ -363,7 +382,7 @@ def download_static_assets(  # noqa: C901
                     )
 
                 fullpath = os.path.join(destination, filename)
-                if not os.path.exists(fullpath) and not skip_static_asset_download:
+                if not skip_static_asset_download and not os.path.exists(fullpath):
                     LOGGER.info("Downloading {} to filename {}".format(url, fullpath))
                     download_file(
                         url,
@@ -756,6 +775,7 @@ def archive_page(
     run_js=False,
     strict=False,
     relative_links=False,
+    final_link_replacement=None
 ):
     """
     Download fully rendered page and all related assets into ricecooker's site archive format.
@@ -812,8 +832,8 @@ def archive_page(
 
         # TODO JASON delete
         if False and skip_static_asset_download:
-           if not isinstance(content, BeautifulSoup):
-               doc = BeautifulSoup(content, features="lxml", preserve_whitespace_tags=web.PRESERVE_WHITESPACE_TAGS)
+            if not isinstance(content, BeautifulSoup):
+                doc = parse_html(content)
         else:
             doc = download_static_assets(
                     content,
@@ -842,7 +862,12 @@ def archive_page(
 
         index_dir = os.path.dirname(index_path)
 
-        new_content = doc.prettify()
+        if final_link_replacement:
+            new_content = final_link_replacement(doc)
+        else:
+            # new_content = doc.prettify()
+            new_content = str(doc)
+
         # Replace any links with relative links that we haven't changed already.
         # TODO: Find a way to determine when this check is no longer needed.
         new_content = replace_links(
@@ -855,9 +880,10 @@ def archive_page(
 
         os.makedirs(index_dir, exist_ok=True)
 
-        soup = BeautifulSoup(new_content, features="lxml", preserve_whitespace_tags=web.PRESERVE_WHITESPACE_TAGS)
+        # soup = parse_html(new_content)
+        # soup_str = str(soup)
         f = open(index_path, "wb")
-        soup_str = str(soup)
+        soup_str = new_content
         f.write((soup_str + "                                               ").encode("utf-8"))
         f.close()
 
@@ -977,7 +1003,7 @@ class ArchiveDownloader:
         info = self.cache_data[url]
         # lxml enables some nice features like being able to search for individual
         # class names using BeautifulSoup, so let's just require it.
-        soup = BeautifulSoup(open(info["index_path"], "rb"), features="lxml", preserve_whitespace_tags=web.PRESERVE_WHITESPACE_TAGS)
+        soup = parse_html(open(info["index_path"], "rb"))
         return soup
 
     def create_dependency_zip(self, count_threshold=2):

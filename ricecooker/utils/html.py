@@ -9,7 +9,7 @@ from urllib.request import pathname2url
 
 import chardet
 import requests
-from selenium import webdriver
+# from selenium import webdriver
 
 from .caching import CacheControlAdapter
 from .caching import FileCache

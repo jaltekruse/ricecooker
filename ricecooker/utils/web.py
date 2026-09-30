@@ -5,7 +5,7 @@ include their own html module.
 """
 import os
 
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, SoupStrainer
 
 PRESERVE_WHITESPACE_TAGS=["p", "pre", "code", "textarea"]
 
@@ -14,7 +14,7 @@ class HTMLParser:
     HTMLParser contains a set of functions for parsing, scraping, and updating an HTML page.
     """
 
-    def __init__(self, filename=None, html=None):
+    def __init__(self, filename=None, html=None, soup=None):
         self.filename = filename
         self.html = html
         self.link_tags = {
@@ -24,6 +24,20 @@ class HTMLParser:
             "link": "href",
             "script": "src",
         }
+        self.soup = soup
+
+    def parse_html(self):
+        only_tags = SoupStrainer(list(self.link_tags.keys()))
+        if not self.soup:
+            print("web.py PARSE HTML")
+            self.soup = BeautifulSoup(self.html, features="lxml", preserve_whitespace_tags=PRESERVE_WHITESPACE_TAGS, parse_only=only_tags)
+        return self.soup
+    
+    def get_links_in_parsed(self, soup, filename):
+        self.soup = soup
+        self.filename = filename
+        self.html = "PLACEHOLDER"
+        return self.get_links()
 
     def get_links(self):
         """
@@ -35,7 +49,7 @@ class HTMLParser:
         if self.html is None:
             basename = os.path.basename(self.filename)
             self.html = open(self.filename).read()
-        soup = BeautifulSoup(self.html, features="html.parser", preserve_whitespace_tags=PRESERVE_WHITESPACE_TAGS)
+        soup = self.parse_html()
 
         extracted_links = []
         for tag_name in self.link_tags:
@@ -72,6 +86,12 @@ class HTMLParser:
                 local_links.append(link)
 
         return local_links
+    
+    def replace_links_in_parsed(self, links_to_replace, soup, filename):
+        self.soup = soup
+        self.filename = filename
+        self.html = "PLACEHOLDER"
+        return self.replace_links(links_to_replace)
 
     def replace_links(self, links_to_replace):
         """
@@ -82,7 +102,8 @@ class HTMLParser:
         """
         if self.html is None:
             self.html = open(self.filename).read()
-        soup = BeautifulSoup(self.html, features="html.parser", preserve_whitespace_tags=PRESERVE_WHITESPACE_TAGS)
+        
+        soup = self.parse_html()
 
         for tag_name in self.link_tags:
             tags = soup.find_all(tag_name)
@@ -91,4 +112,6 @@ class HTMLParser:
                 if link in links_to_replace:
                     tag[self.link_tags[tag_name]] = links_to_replace[link]
 
-        return soup.prettify()
+        # return soup.prettify()
+        return str(soup)
+        # return soup.encode(formatter="html")
