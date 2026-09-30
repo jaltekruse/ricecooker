@@ -36,7 +36,7 @@ class HTMLParser:
     def get_links_in_parsed(self, soup, filename):
         self.soup = soup
         self.filename = filename
-        self.html = "PLACEHOLDER"
+        #self.html = "PLACEHOLDER"
         return self.get_links()
 
     def get_links(self):
@@ -48,7 +48,8 @@ class HTMLParser:
         basename = None
         if self.html is None:
             basename = os.path.basename(self.filename)
-            self.html = open(self.filename).read()
+            if not self.soup:
+                self.html = open(self.filename).read()
         soup = self.parse_html()
 
         extracted_links = []
@@ -90,7 +91,7 @@ class HTMLParser:
     def replace_links_in_parsed(self, links_to_replace, soup, filename):
         self.soup = soup
         self.filename = filename
-        self.html = "PLACEHOLDER"
+        #self.html = "PLACEHOLDER"
         return self.replace_links(links_to_replace)
 
     def replace_links(self, links_to_replace):
@@ -100,7 +101,7 @@ class HTMLParser:
         :param links_to_replace: A dictionary of OriginalURL -> ReplacementURL key value pairs.
         :return: An HTML string of the page with all links replaced.
         """
-        if self.html is None:
+        if self.html is None and not self.soup:
             self.html = open(self.filename).read()
         
         soup = self.parse_html()

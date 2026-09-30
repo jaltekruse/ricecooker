@@ -137,19 +137,8 @@ except BaseException:
 
 def parse_html(doc):
     print("Parse HTML")
-    def custom_strainer_filter(tag_name, attrs):
-        # Include specific tag names
-        if tag_name in ['link', 'script','a','style', 'img', 'source', 'iframe']:
-            return True
-                
-        # Include any tag with 'background-image' inside its style attribute
-        if 'style' in attrs and 'background-image' in attrs['style']:
-            return True
-            
-        return False
 
-    only_tags = SoupStrainer(custom_strainer_filter)
-    return BeautifulSoup(doc, features="lxml", preserve_whitespace_tags=web.PRESERVE_WHITESPACE_TAGS, parse_only=only_tags)
+    return BeautifulSoup(doc, features="lxml", preserve_whitespace_tags=web.PRESERVE_WHITESPACE_TAGS)
 
 
 def read(

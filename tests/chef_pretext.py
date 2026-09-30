@@ -146,7 +146,7 @@ class WikipediaChef(SushiChef):
         #     potato_topic, "https://en.wikipedia.org/wiki/List_of_potato_cultivars"
         # )
 
-        raise "exit early please"
+        # raise "exit early please"
 
         return channel
 
@@ -182,7 +182,7 @@ def add_subpages_from_pretext_toc(channel, list_url):
             # chapter_topic.add_child(sub_chapter_topic)
 
             # if "2.2" in sub_chap_title or "2.3" in sub_chap_title or "2.4" in sub_chap_title:
-            if "4." in sub_chap_title:
+            if "4.7" in sub_chap_title:
             # if "1." in sub_chap_title or "2." in sub_chap_title or "3." in sub_chap_title:
                 sub_chap_url = DOMAIN + list(sub_chapter.find_all("a", recursive="False"))[0].attrs["href"]
                 if dep_zip is None:
@@ -220,20 +220,30 @@ def download_book_page(url, thumbnail, title, sub_chap_number):
 
     index_path = destpath + "/index.html"
     global dep_zip
-    dep_zip_file = HTMLZipFile(dep_zip, preset=format_presets.HTML5_DEPENDENCY_ZIP)
+    dep_zip_file = None
     #dep_zip_file.preset = le_utils.constants.format_presets.HTML5_DEPENDENCY_ZIP
     #print("JASON DEBUG - #$%@#!$^#$%^^@#$%&^#$%%@$#%@#%$#@%@#$%@#$%@#$%@#$%@#$%@#$%@#$%#&&^(*(")
     #print(dep_zip_file.preset)
 
-    dep_file_reference = '/content/zipcontent/{}.zip/'.format(dep_zip_file.checksum)
+    dep_file_reference = ''
     assets_ref = './'
     pie_ref = '../../PIE/'
 
     def replace_links(soup):
+        nonlocal dep_zip_file, dep_file_reference
+
         parser = web.HTMLParser(index_path)
 
         local_links = parser.get_links_in_parsed(soup, index_path)
         links_to_replace = {}
+
+        global dep_zip
+        dep_zip_file = HTMLZipFile(dep_zip, preset=format_presets.HTML5_DEPENDENCY_ZIP)
+        #dep_zip_file.preset = le_utils.constants.format_presets.HTML5_DEPENDENCY_ZIP
+        #print("JASON DEBUG - #$%@#!$^#$%^^@#$%&^#$%%@$#%@#%$#@%@#$%@#$%@#$%@#$%@#$%@#$%@#$%#&&^(*(")
+        #print(dep_zip_file.preset)
+
+        dep_file_reference = '/content/zipcontent/{}.zip/'.format(dep_zip_file.checksum)
 
         for link in local_links:
             # if pie_ref in link:
