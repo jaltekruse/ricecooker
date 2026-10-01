@@ -442,17 +442,17 @@ def download_static_assets(  # noqa: C901
                     filename=filename,
                     middleware_callbacks=content_middleware,
                 )
-            elif content_middleware and not skip_static_asset_download:
-                # Make sure we run middleware, as it creates a list of file dependencies that we need when
-                # converting the content into a zip file.
-                # TODO: We should probably separate out the download step from the middleware step, so
-                # that middleware can be run regardless of how we get the content.
-                content = open(fullpath, "r", encoding="utf-8").read()
-                new_content = content_middleware(content, url)
-                if new_content != content:
-                    # if the middleware changed the content, update it.
-                    with open(fullpath, "w") as f:
-                        f.write(new_content)
+            # elif content_middleware and not skip_static_asset_download:
+            #     # Make sure we run middleware, as it creates a list of file dependencies that we need when
+            #     # converting the content into a zip file.
+            #     # TODO: We should probably separate out the download step from the middleware step, so
+            #     # that middleware can be run regardless of how we get the content.
+            #     content = open(fullpath, "r", encoding="utf-8").read()
+            #     new_content = content_middleware(content, url)
+            #     if new_content != content:
+            #         # if the middleware changed the content, update it.
+            #         with open(fullpath, "w") as f:
+            #             f.write(new_content)
 
     def js_content_middleware(content, url, **kwargs):
         if js_middleware:

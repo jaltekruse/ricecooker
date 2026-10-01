@@ -146,12 +146,18 @@ class WikipediaChef(SushiChef):
         #     potato_topic, "https://en.wikipedia.org/wiki/List_of_potato_cultivars"
         # )
 
-        # raise "exit early please"
+        # avoid channel upload
+        raise "exit early please"
 
         return channel
 
 
 def add_subpages_from_pretext_toc(channel, list_url):
+
+    global dep_zip
+
+    # create a temp directory to house our downloaded files
+    destpath_dep_zip = tempfile.mkdtemp()
 
     # to understand how the following parsing works, look at:
     #   1. the source of the page (e.g. https://en.wikipedia.org/wiki/List_of_citrus_fruits), or inspect in chrome dev tools
@@ -182,25 +188,42 @@ def add_subpages_from_pretext_toc(channel, list_url):
             # chapter_topic.add_child(sub_chapter_topic)
 
             # if "2.2" in sub_chap_title or "2.3" in sub_chap_title or "2.4" in sub_chap_title:
-            if "4.7" in sub_chap_title:
+            # representative set of sub-chapters that have embedded youtube, an image, and a knowl that needs
+            # an html snippet from directory knowl/xref/
+            if any(sub_number in sub_chap_title for sub_number in ("2.4", "11.5", "4.7")):
             # if "1." in sub_chap_title or "2." in sub_chap_title or "3." in sub_chap_title:
                 sub_chap_url = DOMAIN + list(sub_chapter.find_all("a", recursive="False"))[0].attrs["href"]
+                #first phase, download all external assets into the dependency zip, at the end of the first pass through
+                # the book the depedency zip is populated 
                 if dep_zip is None:
-                    download_depedency_zip_files(sub_chap_url, thumbnail=None, title=sub_chap_title)
-                html5app = download_book_page(sub_chap_url, thumbnail=None, title=sub_chap_title, sub_chap_number=sub_chap_number)
-                if not chapter_summary_node_added:
-                    # add a page for the chapter overview, to give us a place to link to for that entry in the table of contents
-                    chapter_html5app = download_book_page(chapter_summary_url, thumbnail=None, title=title, sub_chap_number=sub_chap_number)
-                    chapter_topic.add_child(chapter_html5app[0])
-                    chapter_summary_node_added = True
+                    download_depedency_zip_files(sub_chap_url, thumbnail=None, title=sub_chap_title, destpath=destpath_dep_zip)
+                else:
+                    html5app = download_book_page(sub_chap_url, thumbnail=None, title=sub_chap_title, sub_chap_number=sub_chap_number)
+                    if not chapter_summary_node_added:
+                        # add a page for the chapter overview, to give us a place to link to for that entry in the table of contents
+                        chapter_html5app = download_book_page(chapter_summary_url, thumbnail=None, title=title, sub_chap_number=sub_chap_number)
+                        chapter_topic.add_child(chapter_html5app[0])
+                        chapter_summary_node_added = True
                 
-                chapter_topic.add_child(html5app[0])
+                    chapter_topic.add_child(html5app[0])
 
-                for extra in html5app[1]:
-                    chapter_topic.add_child(extra)
+                    for extra in html5app[1]:
+                        chapter_topic.add_child(extra)
 
 
         channel.add_child(chapter_topic)
+
+    shutil.copy("/home/jason/scraping_sites/aYoutubeVidsForKolibri/video_placeholder.png", destpath_dep_zip)
+
+    f = open(destpath_dep_zip + "/index.html", "wb")
+    global cache_invalidator_string
+    f.write(("<html><body>This is the depedency zip</body></html>" + cache_invalidator_string).encode("utf-8"))
+    f.close()
+    # turn the temp folder into a zip file
+    zippath = create_predictable_zip(destpath_dep_zip)
+
+    dep_zip = zippath
+    return None
 
 
 def find_file_matching_pattern(root_directory, regex_pattern):
@@ -216,6 +239,7 @@ def find_file_matching_pattern(root_directory, regex_pattern):
 
 def download_book_page(url, thumbnail, title, sub_chap_number):
     destpath = tempfile.mkdtemp()
+    
     extra_content = []
 
     index_path = destpath + "/index.html"
@@ -231,13 +255,13 @@ def download_book_page(url, thumbnail, title, sub_chap_number):
 
     def replace_links(soup):
         nonlocal dep_zip_file, dep_file_reference
+        global dep_zip
 
         parser = web.HTMLParser(index_path)
 
         local_links = parser.get_links_in_parsed(soup, index_path)
         links_to_replace = {}
 
-        global dep_zip
         dep_zip_file = HTMLZipFile(dep_zip, preset=format_presets.HTML5_DEPENDENCY_ZIP)
         #dep_zip_file.preset = le_utils.constants.format_presets.HTML5_DEPENDENCY_ZIP
         #print("JASON DEBUG - #$%@#!$^#$%^^@#$%&^#$%%@$#%@#%$#@%@#$%@#$%@#$%@#$%@#$%@#$%@#$%#&&^(*(")
@@ -377,10 +401,7 @@ def download_book_page(url, thumbnail, title, sub_chap_number):
     return (html5app, extra_content)
     #return html5app
 
-def download_depedency_zip_files(url, thumbnail, title):
-
-    # create a temp directory to house our downloaded files
-    destpath = tempfile.mkdtemp()
+def download_depedency_zip_files(url, thumbnail, title, destpath):
 
     # downlod the main wikipedia page, apply a middleware processor, and call it index.html
 
@@ -399,42 +420,28 @@ def download_depedency_zip_files(url, thumbnail, title):
     #     request_fn=make_request,
     # )
 
-    mathjax_dest = destpath + "/cdn.jsdelivr.net/npm/mathjax@3/"
-    shutil.rmtree(mathjax_dest + "es5")
-    shutil.copytree("/home/jason/src/MathJax/es5", mathjax_dest + "/es5")
+    # mathjax_dest = destpath + "/cdn.jsdelivr.net/npm/mathjax@3/"
+    # shutil.rmtree(mathjax_dest + "es5")
+    # shutil.copytree("/home/jason/src/MathJax/es5", mathjax_dest + "/es5")
 
-    source_dir = "/home/jason/src/thinkcspy/output/web/"
-    pretext_dest = destpath + "/localhost:8080/"
-    pretext_asset_dirs = ["external", "generated", "knowl", "_static"]
-    for asset_dir in pretext_asset_dirs:
-        #dest_asset_dir = pretext_dest + asset_dir
+    # source_dir = "/home/jason/src/thinkcspy/output/web/"
+    # pretext_dest = destpath + "/localhost:8080/"
+    # pretext_asset_dirs = ["external", "generated", "knowl", "_static"]
+    # for asset_dir in pretext_asset_dirs:
+    #     #dest_asset_dir = pretext_dest + asset_dir
 
-        # if Path(dest_asset_dir).exists():
-        #     shutil.rmtree(dest_asset_dir)
+    #     # if Path(dest_asset_dir).exists():
+    #     #     shutil.rmtree(dest_asset_dir)
 
-        # copy over resources, merging with anything already preset, like rewritten files that had query params like
-        # pretext_add_on.js?x=1 rewritten to pretext_add_on_x_1.js
-        # Don't overwrite CSS files as those are traversed to rewrite transitive imports of resources like images/fonts
-        # TODO JASON - review this, I modified it to only ignore theme.css instead of all css, I ran into generated css fragments I needed
-        # to copy over, I think most of the transitive css imports I found were pulling in external things that come from other domains
-        # so they don't interact with this copy and potential overwrite, but I could be mor thorough checking everything pretext is doing itself
-        # with CSS
-        shutil.copytree(source_dir + asset_dir, pretext_dest + asset_dir, dirs_exist_ok=True, ignore=shutil.ignore_patterns('theme.css'))
+    #     # copy over resources, merging with anything already preset, like rewritten files that had query params like
+    #     # pretext_add_on.js?x=1 rewritten to pretext_add_on_x_1.js
+    #     # Don't overwrite CSS files as those are traversed to rewrite transitive imports of resources like images/fonts
+    #     # TODO JASON - review this, I modified it to only ignore theme.css instead of all css, I ran into generated css fragments I needed
+    #     # to copy over, I think most of the transitive css imports I found were pulling in external things that come from other domains
+    #     # so they don't interact with this copy and potential overwrite, but I could be mor thorough checking everything pretext is doing itself
+    #     # with CSS
+    #     shutil.copytree(source_dir + asset_dir, pretext_dest + asset_dir, dirs_exist_ok=True, ignore=shutil.ignore_patterns('theme.css'))
 
-    # TODO Jason likely bring this back?
-    #os.remove(destpath + "/index.html")
-
-    shutil.copy("/home/jason/scraping_sites/aYoutubeVidsForKolibri/video_placeholder.png", destpath)
-
-    f = open(destpath + "/index.html", "wb")
-    global cache_invalidator_string
-    f.write(("<html><body>This is the depedency zip</body></html>" + cache_invalidator_string).encode("utf-8"))
-    f.close()
-    # turn the temp folder into a zip file
-    zippath = create_predictable_zip(destpath)
-
-    global dep_zip
-    dep_zip = zippath
     return None
 
 def process_wikipedia_page(content, baseurl, destpath, **kwargs):
