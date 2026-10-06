@@ -145,9 +145,12 @@ class File(object):
     def file_dict(self, filename=None):
         if not filename:
             filename = self.get_filename()
+        preset = self.get_preset()
+        if self.original_filename.endswith(".zip") and self.size > 2000000:
+            preset = "html5_dependency"
         return {
             "size": self.size,
-            "preset": self.get_preset() if self.size < 20000000 else  "html5_dependency",
+            "preset": preset,
             "filename": filename,
             "original_filename": self.original_filename,
             "language": self.language,
