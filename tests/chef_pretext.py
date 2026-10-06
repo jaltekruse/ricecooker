@@ -38,7 +38,7 @@ from le_utils.constants.labels import subjects
 SOURCE_DOMAIN = "https://runestone.academy/ns/books/published/FOPP-PIE/ThinkLikeComputer.html"
 # SOURCE_ID = "thinkcspi_runestone_academy"  # an alphanumeric ID refering to this channel
 # CHANNEL_TITLE = "How to Think Like a Computer Scientist, Interactive Edition"  # a humand-readbale title
-SOURCE_ID = "thinkcspy_runestone_academy_sept29_test_2026"  # an alphanumeric ID refering to this channel
+SOURCE_ID = "thinkcspy_runestone_academy_oct6_test_2026"  # an alphanumeric ID refering to this channel
 CHANNEL_TITLE = "How to Think Like a Computer Scientist, Interactive Edition"  # a humand-readbale title
 
 copyright = "Brad Miller, Paul Resnick, Lauren Murphy, Jeffrey Elkner, Peter Wentworth, Allen B. Downey, Chris Meyers, and Dario Mitchell."
@@ -53,8 +53,9 @@ license_description="GNU Free Documentation License - Version 1.3"
 
 #SOURCE_ID = "jason_pretext_test_new_id"  # an alphanumeric ID refering to this channel
 #CHANNEL_TITLE = "Jason PreteXt testing"
+BOOK_PORT = 8081
 CHANNEL_LANGUAGE = "en"  # language of channel
-DOMAIN = "http://localhost:8080/"
+DOMAIN = f"http://localhost:{BOOK_PORT}/"
 
 
 sess = requests.Session()
@@ -137,6 +138,12 @@ class WikipediaChef(SushiChef):
         add_subpages_from_pretext_toc(
             channel, DOMAIN + "thinkcspy-3.html"
         )
+        # before the first upload, do 2 passes to build the depedency zip, and then sub-in dependecy zip
+        # has with the URLs to build the pages
+        if not orig_urls_to_node_ids:
+            add_subpages_from_pretext_toc(
+                channel, DOMAIN + "thinkcspy-3.html"
+            )
 
         # potato_topic = TopicNode(
         #     source_id="List_of_potato_cultivars", title="Potatoes!"
@@ -147,7 +154,7 @@ class WikipediaChef(SushiChef):
         # )
 
         # avoid channel upload
-        raise "exit early please"
+        # raise "exit early please"
 
         return channel
 
@@ -211,18 +218,21 @@ def add_subpages_from_pretext_toc(channel, list_url):
                         chapter_topic.add_child(extra)
 
 
-        channel.add_child(chapter_topic)
+        if dep_zip:
+            channel.add_child(chapter_topic)
 
-    shutil.copy("/home/jason/scraping_sites/aYoutubeVidsForKolibri/video_placeholder.png", destpath_dep_zip)
+    if not dep_zip:
+        shutil.copy("/home/jason/scraping_sites/aYoutubeVidsForKolibri/video_placeholder.png", destpath_dep_zip)
 
-    f = open(destpath_dep_zip + "/index.html", "wb")
-    global cache_invalidator_string
-    f.write(("<html><body>This is the depedency zip</body></html>" + cache_invalidator_string).encode("utf-8"))
-    f.close()
-    # turn the temp folder into a zip file
-    zippath = create_predictable_zip(destpath_dep_zip)
+        f = open(destpath_dep_zip + "/index.html", "wb")
+        global cache_invalidator_string
+        f.write(("<html><body>This is the depedency zip</body></html>" + cache_invalidator_string).encode("utf-8"))
+        f.close()
+        # turn the temp folder into a zip file
+        zippath = create_predictable_zip(destpath_dep_zip)
 
-    dep_zip = zippath
+        dep_zip = zippath
+
     return None
 
 
@@ -267,7 +277,7 @@ def download_book_page(url, thumbnail, title, sub_chap_number):
         #print("JASON DEBUG - #$%@#!$^#$%^^@#$%&^#$%%@$#%@#%$#@%@#$%@#$%@#$%@#$%@#$%@#$%@#$%#&&^(*(")
         #print(dep_zip_file.preset)
 
-        dep_file_reference = '/content/zipcontent/{}.zip/'.format(dep_zip_file.checksum)
+        dep_file_reference = '/zipcontent/{}.zip/'.format(dep_zip_file.checksum)
 
         for link in local_links:
             # if pie_ref in link:
@@ -343,8 +353,8 @@ def download_book_page(url, thumbnail, title, sub_chap_number):
 
     # TODO Jason - very hack just trying to get pretext working
     # this is for custom data attributes on some tags that are interpreted as URLs by PreteXt javascript
-    new_html = new_html.replace("\"_static", "\"" + dep_file_reference + "./localhost:8080/_static")
-    new_html = new_html.replace("\"./knowl", "\"" + dep_file_reference  + "./localhost:8080/knowl")
+    new_html = new_html.replace("\"_static", "\"" + dep_file_reference + f"./localhost:{BOOK_PORT}/_static")
+    new_html = new_html.replace("\"./knowl", "\"" + dep_file_reference  + f"./localhost:{BOOK_PORT}/knowl")
 
     # replace other URLs with navigation events to visit other node in the Kolibri tree
     for orig_url in orig_urls_to_node_ids:
@@ -425,7 +435,7 @@ def download_depedency_zip_files(url, thumbnail, title, destpath):
     # shutil.copytree("/home/jason/src/MathJax/es5", mathjax_dest + "/es5")
 
     # source_dir = "/home/jason/src/thinkcspy/output/web/"
-    # pretext_dest = destpath + "/localhost:8080/"
+    # pretext_dest = destpath + f"/localhost:{BOOK_PORT}/"
     # pretext_asset_dirs = ["external", "generated", "knowl", "_static"]
     # for asset_dir in pretext_asset_dirs:
     #     #dest_asset_dir = pretext_dest + asset_dir
