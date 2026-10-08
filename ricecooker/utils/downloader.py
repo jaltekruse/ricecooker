@@ -813,7 +813,7 @@ def archive_page(
     resource_urls = {}
 
     if content:
-        LOGGER.warning("Downloading linked files for {}".format(url))
+        LOGGER.info("Downloading linked files for {}".format(url))
         page_url = url
 
         def get_resource_filename(url, destination):

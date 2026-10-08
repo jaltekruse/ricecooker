@@ -146,8 +146,11 @@ class File(object):
         if not filename:
             filename = self.get_filename()
         preset = self.get_preset()
-        if self.original_filename.endswith(".zip") and self.size > 2000000:
-            preset = "html5_dependency"
+        if self.original_filename.endswith(".zip"):
+            if self.size > 20000000:
+                preset = "html5_dependency"
+            else:
+                preset = 'html5_zip'
         return {
             "size": self.size,
             "preset": preset,

@@ -38,7 +38,8 @@ from le_utils.constants.labels import subjects
 SOURCE_DOMAIN = "https://runestone.academy/ns/books/published/FOPP-PIE/ThinkLikeComputer.html"
 # SOURCE_ID = "thinkcspi_runestone_academy"  # an alphanumeric ID refering to this channel
 # CHANNEL_TITLE = "How to Think Like a Computer Scientist, Interactive Edition"  # a humand-readbale title
-SOURCE_ID = "thinkcspy_runestone_academy_sept29_test_2026"  # an alphanumeric ID refering to this channel
+#SOURCE_ID = "thinkcspy_runestone_academy_sept29_test_2026"  # an alphanumeric ID refering to this channel
+SOURCE_ID = "thinkcspy_runestone_academy_sept24_2026"  # an alphanumeric ID refering to this channel
 CHANNEL_TITLE = "How to Think Like a Computer Scientist, Interactive Edition"  # a humand-readbale title
 
 copyright = "Brad Miller, Paul Resnick, Lauren Murphy, Jeffrey Elkner, Peter Wentworth, Allen B. Downey, Chris Meyers, and Dario Mitchell."
@@ -53,8 +54,9 @@ license_description="GNU Free Documentation License - Version 1.3"
 
 #SOURCE_ID = "jason_pretext_test_new_id"  # an alphanumeric ID refering to this channel
 #CHANNEL_TITLE = "Jason PreteXt testing"
+BOOK_PORT = 8081
 CHANNEL_LANGUAGE = "en"  # language of channel
-DOMAIN = "http://localhost:8080/"
+DOMAIN = f"http://localhost:{BOOK_PORT}/"
 
 
 sess = requests.Session()
@@ -182,7 +184,7 @@ def add_subpages_from_pretext_toc(channel, list_url):
             # chapter_topic.add_child(sub_chapter_topic)
 
             # if "2.2" in sub_chap_title or "2.3" in sub_chap_title or "2.4" in sub_chap_title:
-            if "4.7" in sub_chap_title:
+            if "10." in sub_chap_title:
             # if "1." in sub_chap_title or "2." in sub_chap_title or "3." in sub_chap_title:
                 sub_chap_url = DOMAIN + list(sub_chapter.find_all("a", recursive="False"))[0].attrs["href"]
                 if dep_zip is None:
@@ -319,8 +321,8 @@ def download_book_page(url, thumbnail, title, sub_chap_number):
 
     # TODO Jason - very hack just trying to get pretext working
     # this is for custom data attributes on some tags that are interpreted as URLs by PreteXt javascript
-    new_html = new_html.replace("\"_static", "\"" + dep_file_reference + "./localhost:8080/_static")
-    new_html = new_html.replace("\"./knowl", "\"" + dep_file_reference  + "./localhost:8080/knowl")
+    new_html = new_html.replace("\"_static", "\"" + dep_file_reference + f"./localhost:{BOOK_PORT}/_static")
+    new_html = new_html.replace("\"./knowl", "\"" + dep_file_reference  + f"./localhost:{BOOK_PORT}/knowl")
 
     # replace other URLs with navigation events to visit other node in the Kolibri tree
     for orig_url in orig_urls_to_node_ids:
@@ -404,7 +406,7 @@ def download_depedency_zip_files(url, thumbnail, title):
     shutil.copytree("/home/jason/src/MathJax/es5", mathjax_dest + "/es5")
 
     source_dir = "/home/jason/src/thinkcspy/output/web/"
-    pretext_dest = destpath + "/localhost:8080/"
+    pretext_dest = destpath + f"/localhost:{BOOK_PORT}/"
     pretext_asset_dirs = ["external", "generated", "knowl", "_static"]
     for asset_dir in pretext_asset_dirs:
         #dest_asset_dir = pretext_dest + asset_dir
