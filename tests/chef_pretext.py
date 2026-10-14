@@ -419,17 +419,8 @@ def download_depedency_zip_files(page_urls):
     destpath = tempfile.mkdtemp()
 
     scanned_scripts = set()
+    downloaded_resource_urls = set()
     for url in page_urls:
-        # downloads everything directly referenced by the page (css, js, images, etc.), laid out by domain and path,
-        # e.g. localhost:8081/_static/pretext/js/pretext.js. Each page is archived into its own folder and then merged,
-        # as archive_page re-processes css files it finds already downloaded, which breaks the links it already
-        # rewrote in them. Downloads are cached, so resources shared between pages are only fetched once.
-        page_archive = tempfile.mkdtemp()
-        archive_page(url, page_archive)
-        os.remove(os.path.join(page_archive, "index.html"))
-        merge_new_files(page_archive, destpath)
-        shutil.rmtree(page_archive)
-
         page = get_parsed_html_from_url(url)
 
         # knowls are the html snippets loaded when expanding things like cross references. They are stored with
@@ -447,6 +438,9 @@ def download_depedency_zip_files(page_urls):
             else:
                 download_webpack_lazy_chunks(script_url, destpath)
 
+        # this removes resources from the parsed page, so it needs to be done last
+        download_page_resources(page, url, destpath, downloaded_resource_urls)
+
     shutil.copy(os.path.join(VIDEO_DIR, "video_placeholder.png"), destpath)
 
     f = open(destpath + "/index.html", "wb")
@@ -461,15 +455,34 @@ def download_depedency_zip_files(page_urls):
     return None
 
 
-def merge_new_files(src_dir, dest_dir):
-    """move the files in src_dir into dest_dir, skipping any that are already there"""
-    for root, _, files in os.walk(src_dir):
-        for filename in files:
-            src = os.path.join(root, filename)
-            dest = os.path.join(dest_dir, os.path.relpath(src, src_dir))
-            if not os.path.exists(dest):
-                os.makedirs(os.path.dirname(dest), exist_ok=True)
-                shutil.move(src, dest)
+# tags and attributes for the resources referenced directly in a page that download_static_assets downloads
+PAGE_RESOURCE_ATTRS = {"img": "src", "link": "href", "script": "src", "source": "src"}
+
+
+def download_page_resources(page, page_url, archive_dir, downloaded_resource_urls):
+    """
+    Download everything directly referenced by a parsed page (css, js, images, etc.) into archive_dir, laid out by
+    domain and path the same way archive_page does, e.g. localhost:8081/_static/pretext/js/pretext.js
+
+    Resources already downloaded for an earlier page are removed from the page first, so the many resources shared
+    between pages are only processed once. This also matters for correctness, download_static_assets re-processes
+    css files it finds already downloaded, which breaks the links it rewrote in them the first time.
+    """
+    for tag, attr in PAGE_RESOURCE_ATTRS.items():
+        for node in page.find_all(tag, attrs={attr: True}):
+            resource_url = urljoin(page_url, node[attr])
+            if resource_url in downloaded_resource_urls:
+                node.decompose()
+            else:
+                downloaded_resource_urls.add(resource_url)
+
+    resource_urls = {}
+
+    def get_resource_filename(url, destination):
+        return downloader.get_archive_filename(url, destination, page_url, archive_dir, resource_urls)
+
+    downloader.download_static_assets(page, archive_dir, urljoin(page_url, "."),
+                                      derive_filename=get_resource_filename, resource_urls=resource_urls)
 
 
 def archive_path_for_url(url):

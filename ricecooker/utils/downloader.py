@@ -16,6 +16,7 @@ import chardet
 import requests
 #import selenium.webdriver.support.ui as selenium_ui
 from bs4 import BeautifulSoup, SoupStrainer
+from bs4.dammit import EncodingDetector
 from cachecontrol.caches.file_cache import FileCache
 from requests_file import FileAdapter
 #from selenium import webdriver
@@ -279,7 +280,7 @@ def _derive_filename(url, destination, skip_static_asset_download=False):
     if not ext or not valid_extension:
         # This COULD be an index file in a dir, or just a file with no extension. Handle either case by
         # turning the path into filename + '/index' + the file extension from the content type
-        response = requests.get(url)
+        response = DOWNLOAD_SESSION.get(url)
         type = response.headers["content-type"].split(";")[0]
         ext = mimetypes.guess_extension(type)
         # if we're really stuck, just default to HTML as that is most likely if this is a redirect.
@@ -735,7 +736,7 @@ def get_archive_filename(url, destination, page_url=None, download_root=None, re
     if not ext or not valid_extension:
         # This COULD be an index file in a dir, or just a file with no extension. Handle either case by
         # turning the path into filename + '/index' + the file extension from the content type
-        response = requests.get(url)
+        response = DOWNLOAD_SESSION.get(url)
         type = response.headers["content-type"].split(";")[0]
         ext = mimetypes.guess_extension(type)
         # if we're really stuck, just default to HTML as that is most likely if this is a redirect.
@@ -792,10 +793,15 @@ def archive_page(
         }
         if "charset" not in response.headers["Content-Type"]:
             # It seems requests defaults to ISO-8859-1 when the headers don't explicitly declare an
-            # encoding. In this case, we're better off using chardet to guess instead.
-            encoding = chardet.detect(response.content)
-            if encoding and "encoding" in encoding:
-                response.encoding = encoding["encoding"]
+            # encoding. In this case, we're better off using the encoding declared in the page, or if there
+            # isn't one using chardet to guess instead, which is slow on large pages.
+            declared_encoding = EncodingDetector.find_declared_encoding(response.content, is_html=True)
+            if declared_encoding:
+                response.encoding = declared_encoding
+            else:
+                encoding = chardet.detect(response.content)
+                if encoding and "encoding" in encoding:
+                    response.encoding = encoding["encoding"]
             LOGGER.warning("Encoding = {}".format(response.encoding))
         content = response.text
 
