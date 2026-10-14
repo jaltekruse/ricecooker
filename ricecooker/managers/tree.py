@@ -222,6 +222,16 @@ class ChannelManager:
             return
         return str(f)
 
+    @staticmethod
+    def _format_size(size):
+        if size is None:
+            return "(unknown size)"
+        for unit in ["B", "KB", "MB"]:
+            if size < 1024:
+                return "({:.1f} {})".format(size, unit)
+            size /= 1024
+        return "({:.1f} GB)".format(size)
+
     def upload_files(self, file_list):
         """upload_files: uploads files to server
         Args:
@@ -241,8 +251,11 @@ class ChannelManager:
                     if filename is not None:
                         counter += 1
                         config.LOGGER.info(
-                            "\tUploaded {0} ({count}/{total}) ".format(
-                                filename, count=counter, total=len(files_to_upload)
+                            "\tUploaded {0} {size} ({count}/{total}) ".format(
+                                filename,
+                                size=self._format_size(self.file_map[filename].size),
+                                count=counter,
+                                total=len(files_to_upload),
                             )
                         )
         finally:
