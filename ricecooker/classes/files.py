@@ -145,15 +145,9 @@ class File(object):
     def file_dict(self, filename=None):
         if not filename:
             filename = self.get_filename()
-        preset = self.get_preset()
-        if self.original_filename.endswith(".zip"):
-            if self.size > 20000000:
-                preset = "html5_dependency"
-            else:
-                preset = 'html5_zip'
         return {
             "size": self.size,
-            "preset": preset,
+            "preset": self.get_preset(),
             "filename": filename,
             "original_filename": self.original_filename,
             "language": self.language,
@@ -222,6 +216,10 @@ class DownloadFile(File):
             for key in metadata:
                 if key == "path":
                     # Don't overwrite the input path.
+                    continue
+                if key == "preset" and self.preset:
+                    # The pipeline infers a preset from the file extension, e.g. html5_zip for any .zip,
+                    # don't let that overwrite a preset that was explicitly set, like html5_dependency.
                     continue
                 setattr(self, key, metadata[key])
             self.validate()
