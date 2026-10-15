@@ -1,7 +1,12 @@
 #!/usr/bin/env python
+import base64
+import concurrent.futures
+import hashlib
 import os
+import posixpath
 import re
 import tempfile
+from urllib.parse import quote
 from urllib.parse import urldefrag
 from urllib.parse import urljoin
 from urllib.parse import urlparse
@@ -66,8 +71,6 @@ BOOK_BASE_URL = DOMAIN
 TOC_PAGE = "thinkcspy-3.html"
 # only import sub-chapters whose number contains this string, set to None to import the whole book
 SUBCHAPTER_FILTER = "10."
-# Fallback used if the MathJax files can't be listed from jsDelivr
-MATHJAX_LOCAL_ES5_DIR = "/home/jason/src/MathJax/es5"
 VIDEO_DIR = "/home/jason/scraping_sites/aYoutubeVidsForKolibri"
 
 
@@ -331,6 +334,8 @@ def download_book_page(url, thumbnail, title, sub_chap_number):
         # knowls are html snippets that are lazily loaded when clicked on, find them now while we have the parsed page
         knowls.update(fetch_knowls(soup, url))
 
+        point_mathjax_at_dependency_zip(soup, dep_file_reference)
+
         return parser.replace_links_in_parsed(links_to_replace, soup, index_path)
 
     knowls = {}
@@ -433,10 +438,10 @@ def download_depedency_zip_files(page_urls):
             if script_url in scanned_scripts:
                 continue
             scanned_scripts.add(script_url)
-            if "mathjax" in script_url.lower():
-                download_mathjax(script_url, destpath)
-            else:
+            if not download_mathjax(script_url, page, url, destpath):
                 download_webpack_lazy_chunks(script_url, destpath)
+
+        download_mathjax_loader_extensions(page, url, destpath)
 
         # this removes resources from the parsed page, so it needs to be done last
         download_page_resources(page, url, destpath, downloaded_resource_urls)
@@ -494,10 +499,13 @@ def archive_path_for_url(url):
     return parsed.netloc + parsed.path
 
 
-def download_to_archive(url, archive_dir):
+def download_to_archive(url, archive_dir, source_urls=None):
     """
     Download a single resource into archive_dir at the same location archive_page would put it, returns the content
     of the resource, or None if it couldn't be downloaded
+
+    source_urls are the places to try downloading the content from, in order, when it should come from somewhere
+    other than url itself, the location the page will request it from
     """
     url = urldefrag(url)[0]
     if urlparse(url).scheme not in ("http", "https"):
@@ -506,13 +514,24 @@ def download_to_archive(url, archive_dir):
     if os.path.isfile(dest):
         with open(dest, "rb") as existing:
             return existing.read()
-    response = make_request(url)
-    if response.status_code != 200:
-        return None
-    os.makedirs(os.path.dirname(dest), exist_ok=True)
-    with open(dest, "wb") as f:
-        f.write(response.content)
-    return response.content
+    for source_url in source_urls or [url]:
+        try:
+            response = make_request(source_url)
+        except requests.RequestException as e:
+            LOGGER.warning("Could not download {}: {}".format(source_url, e))
+            continue
+        if response.status_code == 200:
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            with open(dest, "wb") as f:
+                f.write(response.content)
+            return response.content
+    return None
+
+
+def download_all_to_archive(urls_and_sources, archive_dir):
+    """download_to_archive for a list of (url, source_urls), in parallel, as packages like MathJax have many files"""
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+        list(executor.map(lambda args: download_to_archive(args[0], archive_dir, source_urls=args[1]), urls_and_sources))
 
 
 # Matches the chunk filename functions in a webpack runtime, which contain a map from chunk id to content hash, e.g.
@@ -625,31 +644,203 @@ def replace_links_to_other_pages(html):
     return html
 
 
-def download_mathjax(script_url, archive_dir):
-    """
-    MathJax loads its fonts and TeX extensions as they are needed, and there isn't a reliable way to know which ones
-    a page will need, so download the whole es5 directory it is loaded from. When MathJax comes from jsDelivr the
-    files can be listed with their API, otherwise fall back to a local copy of MathJax.
-    """
-    es5_url = script_url.split("?")[0].rsplit("/", 1)[0] + "/"
-    es5_dest = os.path.join(archive_dir, archive_path_for_url(es5_url))
+# MathJax scripts found while building the dependency zip, keyed by the path archive_page rewrites the script's src
+# to, so that the pages can be pointed at the downloaded copy of the MathJax package (see download_mathjax)
+mathjax_scripts = {}
 
-    match = re.match(r"https?://cdn\.jsdelivr\.net/npm/((?:@[^/]+/)?[^/@]+)@([^/]+)(/.*/)$", es5_url)
-    if match:
-        package, version, package_dir = match.groups()
-        listing = make_request(
-            "https://data.jsdelivr.com/v1/packages/npm/{}@{}?structure=flat".format(package, version))
-        if listing.status_code == 200:
-            for file_info in listing.json()["files"]:
-                if file_info["name"].startswith(package_dir):
-                    download_to_archive(es5_url + file_info["name"][len(package_dir):], archive_dir)
-            return
+JSDELIVR_NPM_API = "https://data.jsdelivr.com/v1/packages/npm/"
+JSDELIVR_NPM_CDN = "https://cdn.jsdelivr.net/npm/"
 
-    if os.path.isdir(MATHJAX_LOCAL_ES5_DIR):
-        LOGGER.warning("Could not list MathJax files from {}, using local copy {}".format(es5_url, MATHJAX_LOCAL_ES5_DIR))
-        shutil.copytree(MATHJAX_LOCAL_ES5_DIR, es5_dest, dirs_exist_ok=True)
-    else:
-        LOGGER.warning("Could not download all of MathJax from {}, some math may not render".format(es5_url))
+# Where books commonly load MathJax from, capturing the version (or version range) and the path within the package
+MATHJAX_CDN_URL_RES = [
+    re.compile(r"^https?://cdn\.jsdelivr\.net/npm/mathjax@([^/]+)(/.+)$"),
+    re.compile(r"^https?://unpkg\.com/mathjax@([^/]+)(/.+)$"),
+    re.compile(r"^https?://cdnjs\.cloudflare\.com/ajax/libs/mathjax/([^/]+)(/.+)$"),
+    re.compile(r"^https?://cdn\.jsdelivr\.net/gh/mathjax/MathJax@([^/]+)(/.+)$"),
+]
+# version numbers mentioned in a MathJax script, used to identify copies of MathJax a book hosts itself
+MATHJAX_VERSION_CANDIDATE_RE = re.compile(r'"([234]\.\d+\.\d+)"')
+# the combined components at the top level of the MathJax 4 package, e.g. tex-mml-chtml.js, a page only uses one
+MATHJAX_4_COMBINED_COMPONENT_RE = re.compile(r"^/(?:tex|mml)[\w-]*\.js$")
+# MathJax 4 loads its fonts from separate packages, by default from here (its default loader.paths.fonts)
+MATHJAX_4_FONTS_URL = "https://cdn.jsdelivr.net/npm/@mathjax"
+
+
+def list_npm_package(package, version_spec):
+    """
+    List the files in an npm package with the jsDelivr API, returns (exact version, {path in package: sha256 base64})
+    """
+    try:
+        resolved = make_request("{}{}/resolved?specifier={}".format(JSDELIVR_NPM_API, package, quote(version_spec)))
+        version = resolved.json().get("version") if resolved.status_code == 200 else None
+        if not version:
+            return None, {}
+        listing = make_request("{}{}@{}?structure=flat".format(JSDELIVR_NPM_API, package, version))
+        if listing.status_code != 200:
+            return version, {}
+        return version, {f["name"]: f["hash"] for f in listing.json()["files"]}
+    except (requests.RequestException, ValueError, KeyError) as e:
+        LOGGER.warning("Could not list the files in {}@{} from jsDelivr: {}".format(package, version_spec, e))
+        return None, {}
+
+
+def identify_mathjax(script_url, script_content):
+    """
+    Work out which version of MathJax a script is from, and where the script is within the MathJax package.
+
+    Returns (exact version, files in the package, path of the script in the package), or None if it isn't recognized
+    """
+    url = script_url.split("?")[0]
+    for pattern in MATHJAX_CDN_URL_RES:
+        match = pattern.match(url)
+        if match:
+            version, files = list_npm_package("mathjax", match.group(1))
+            if match.group(2) in files:
+                return version, files, match.group(2)
+
+    # a copy of MathJax hosted with the book, look for a file in one of the versions it mentions with the same contents
+    script_hash = base64.b64encode(hashlib.sha256(script_content).digest()).decode()
+    candidates = dict.fromkeys(MATHJAX_VERSION_CANDIDATE_RE.findall(script_content.decode("utf-8", errors="replace")))
+    for version_spec in list(candidates)[:5]:
+        version, files = list_npm_package("mathjax", version_spec)
+        matching = [path for path, file_hash in files.items() if file_hash == script_hash]
+        if matching:
+            # prefer the same file name, the same contents can be in the package more than once
+            return version, files, max(matching, key=lambda path: url.endswith(path))
+    return None
+
+
+def mathjax_files_needed(files, script_path, major_version):
+    """The files from the MathJax package that a page loading the script at script_path could need"""
+    if major_version == 2:
+        # unpacked/ is the uncompressed source of the rest of the package
+        return [f for f in files if not f.startswith(("/unpacked/", "/test/", "/docs/"))]
+    if major_version == 3:
+        # the components are loaded relative to the script, e.g. everything in es5/
+        component_root = os.path.dirname(script_path).rstrip("/") + "/"
+        return [f for f in files if f.startswith(component_root)]
+    return [f for f in files if not MATHJAX_4_COMBINED_COMPONENT_RE.match(f) or f == script_path]
+
+
+def mathjax_config_text(page):
+    """The text of the inline scripts in a page that configure MathJax"""
+    return "\n".join(s.get_text() for s in page.find_all("script", src=False) if "MathJax" in s.get_text())
+
+
+def download_mathjax(script_url, page, page_url, archive_dir):
+    """
+    MathJax loads its components, fonts and TeX extensions as they are needed, and there isn't a reliable way to know
+    which ones a page will need. So identify the version of MathJax the script is from and download the files from that
+    version of the package that could be loaded, listing them with the jsDelivr API, as CDNs don't allow listing
+    directories. Files are saved where the page would load them from, falling back to downloading them from jsDelivr.
+
+    Returns whether the script is MathJax
+    """
+    response = make_request(script_url)
+    if response.status_code != 200:
+        return False
+    named_mathjax = "mathjax" in script_url.lower()
+    if not named_mathjax and b"MathJax" not in response.content:
+        return False
+    identified = identify_mathjax(script_url, response.content)
+    if not identified:
+        if named_mathjax:
+            LOGGER.warning("Could not identify the version of MathJax loaded from {}, math may not render".format(script_url))
+        return False
+    version, files, script_path = identified
+    major_version = int(version.split(".")[0])
+    LOGGER.info("Downloading MathJax {} for {}".format(version, script_url))
+
+    # MathJax loads everything relative to the directory its script is in, whatever that directory is called
+    script_dir = posixpath.dirname(script_path)
+    urls_and_sources = []
+    for path in mathjax_files_needed(files, script_path, major_version):
+        file_url = urljoin(script_url, posixpath.relpath(path, script_dir))
+        urls_and_sources.append((file_url, [file_url, "{}mathjax@{}{}".format(JSDELIVR_NPM_CDN, version, path)]))
+    download_all_to_archive(urls_and_sources, archive_dir)
+
+    fonts_url = None
+    if major_version >= 4:
+        fonts_url = download_mathjax_4_font(version, script_path, page, archive_dir)
+
+    archived_src = downloader.get_archive_filename(script_url, archive_dir, page_url)
+    mathjax_scripts[archived_src] = {"url": script_url, "fonts_url": fonts_url}
+    return True
+
+
+def download_mathjax_4_font(version, script_path, page, archive_dir):
+    """
+    Starting with MathJax 4, fonts are in separate packages, loaded from jsDelivr by default rather than relative to
+    MathJax, https://docs.mathjax.org/en/v4.1/web/hosting.html. Download the font the page uses, to where it will be
+    loaded from once the page's loader.paths.fonts is pointed at the dependency zip (see point_mathjax_at_dependency_zip).
+
+    Returns the URL the font packages are saved under, to use for loader.paths.fonts
+    """
+    config = mathjax_config_text(page)
+    if re.search(r"\bfontPath\b", config):
+        LOGGER.warning("The MathJax configuration sets a fontPath, which isn't handled, math may not render")
+    font_match = re.search(r"""\bfont["']?\s*:\s*["']([\w-]+)["']""", config)
+    font = font_match.group(1) if font_match else "mathjax-newcm"
+    output = "svg" if "svg" in os.path.basename(script_path) else "chtml"
+
+    package = "@mathjax/{}-font".format(font)
+    # MathJax loads the version of the font matching its own version
+    font_version, files = list_npm_package(package, version)
+    if not files:
+        font_version, files = list_npm_package(package, version.split(".")[0])
+    if not files:
+        LOGGER.warning("Could not list the files for the MathJax font {}, math may not render".format(package))
+        return None
+
+    # e.g. chtml.js, chtml/woff2/*.woff2 and chtml/dynamic/*.js
+    download_all_to_archive([
+        ("{}/{}-font{}".format(MATHJAX_4_FONTS_URL, font, path),
+         ["{}{}@{}{}".format(JSDELIVR_NPM_CDN, package, font_version, path)])
+        for path in files if path == "/{}.js".format(output) or path.startswith("/{}/".format(output))
+    ], archive_dir)
+    return MATHJAX_4_FONTS_URL
+
+
+def download_mathjax_loader_extensions(page, page_url, archive_dir):
+    """
+    Download the extra files a page's MathJax configuration has the MathJax loader load, from paths the configuration
+    adds, e.g. PreTeXt loads [pretext]/mathjaxknowl3.js with "paths": {"pretext": "_static/pretext/js/lib"}
+    """
+    config = mathjax_config_text(page)
+    paths = {}
+    for block in re.findall(r"""\bpaths["']?\s*:\s*\{([^{}]*)\}""", config):
+        paths.update(re.findall(r"""["']?([\w-]+)["']?\s*:\s*["']([^"']+)["']""", block))
+    # a list of strings, which contain [ and ], e.g. "load": ["[tex]/extpfeil", "[pretext]/mathjaxknowl3.js"]
+    for block in re.findall(r"""\bload["']?\s*:\s*\[((?:\s*(?:"[^"]*"|'[^']*')\s*,?)*)\s*\]""", config):
+        for entry in re.findall(r"""["']([^"']+)["']""", block):
+            match = re.match(r"^\[([\w-]+)\]/(.+)$", entry)
+            # anything else is a MathJax component, which is in the MathJax package
+            if not match or match.group(1) not in paths or "[" in paths[match.group(1)]:
+                continue
+            extension_url = urljoin(page_url, paths[match.group(1)].rstrip("/") + "/" + match.group(2))
+            if not os.path.splitext(extension_url)[1]:
+                extension_url += ".js"
+            download_to_archive(extension_url, archive_dir)
+
+
+def point_mathjax_at_dependency_zip(page, dep_file_reference):
+    """Point a page's MathJax script tags at the MathJax package downloaded into the dependency zip"""
+    for script in page.find_all("script", src=True):
+        src = script["src"]
+        info = mathjax_scripts.get(src[2:] if src.startswith("./") else src)
+        if not info:
+            continue
+        # keep the query, MathJax 2 reads its configuration from it, e.g. MathJax.js?config=TeX-AMS_CHTML
+        query = urlparse(info["url"]).query
+        script["src"] = dep_file_reference + archive_path_for_url(info["url"]) + ("?" + query if query else "")
+        if info["fonts_url"]:
+            # unless the page sets it, MathJax 4 loads fonts from jsDelivr instead of relative to itself
+            set_fonts_path = page.new_tag("script")
+            set_fonts_path.string = (
+                "window.MathJax = window.MathJax || {}; MathJax.loader = MathJax.loader || {}; "
+                "MathJax.loader.paths = Object.assign({fonts: '%s'}, MathJax.loader.paths);"
+                % (dep_file_reference + archive_path_for_url(info["fonts_url"])))
+            script.insert_before(set_fonts_path)
 
 
 def process_wikipedia_page(content, baseurl, destpath, **kwargs):
