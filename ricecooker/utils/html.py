@@ -207,6 +207,11 @@ def download_file(  # noqa: C901
 
     # make the actual request to the URL
     response = request_fn(url)
+    if response is None:
+        # the request never got a response, e.g. the host couldn't be reached, which make_request only raises for
+        # when STRICT is set
+        LOGGER.error("Could not download {}, skipping it".format(url))
+        return None, None
     content = response.content
 
     if STRICT:
