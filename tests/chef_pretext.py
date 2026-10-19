@@ -113,6 +113,15 @@ def make_request(url, *args, **kwargs):
         LOGGER.warning("NOT CACHED: " + url)
     return response
 
+def try_request(url, *args, **kwargs):
+    """make_request, but returning None when the host can't be reached rather than raising"""
+    try:
+        return make_request(url, *args, **kwargs)
+    except requests.RequestException as e:
+        LOGGER.warning("Could not download {}: {}".format(url, e))
+        return None
+
+
 def parse_html(html):
     return BeautifulSoup(html, features="html.parser", preserve_whitespace_tags=web.PRESERVE_WHITESPACE_TAGS)
 
@@ -551,8 +560,8 @@ def download_webpack_lazy_chunks(script_url, archive_dir):
     Runestone components are bundled with webpack, which only loads most of its JS and CSS chunks when a page uses a
     component that needs them. If this script is a webpack runtime, download all of the chunks it could load.
     """
-    response = make_request(script_url)
-    if response.status_code != 200:
+    response = try_request(script_url)
+    if response is None or response.status_code != 200:
         return
     runtime = response.text
     if "webpackChunk" not in runtime:
@@ -739,8 +748,8 @@ def download_mathjax(script_url, page, page_url, archive_dir):
 
     Returns whether the script is MathJax
     """
-    response = make_request(script_url)
-    if response.status_code != 200:
+    response = try_request(script_url)
+    if response is None or response.status_code != 200:
         return False
     named_mathjax = "mathjax" in script_url.lower()
     if not named_mathjax and b"MathJax" not in response.content:
@@ -764,14 +773,16 @@ def download_mathjax(script_url, page, page_url, archive_dir):
 
     fonts_url = None
     if major_version >= 4:
-        fonts_url = download_mathjax_4_font(version, script_path, page, archive_dir)
+        # MathJax's own copy of the package's directory, e.g. https://cdn.jsdelivr.net/npm/mathjax@4/
+        package_root = urljoin(script_url, posixpath.relpath("/", script_dir).rstrip("/") + "/" if script_dir != "/" else ".")
+        fonts_url = download_mathjax_4_font(version, script_path, page, archive_dir, package_root)
 
     archived_src = downloader.get_archive_filename(script_url, archive_dir, page_url)
     mathjax_scripts[archived_src] = {"url": script_url, "fonts_url": fonts_url}
     return True
 
 
-def download_mathjax_4_font(version, script_path, page, archive_dir):
+def download_mathjax_4_font(version, script_path, page, archive_dir, package_root):
     """
     Starting with MathJax 4, fonts are in separate packages, loaded from jsDelivr by default rather than relative to
     MathJax, https://docs.mathjax.org/en/v4.1/web/hosting.html. Download the font the page uses, to where it will be
@@ -795,10 +806,14 @@ def download_mathjax_4_font(version, script_path, page, archive_dir):
         LOGGER.warning("Could not list the files for the MathJax font {}, math may not render".format(package))
         return None
 
-    # e.g. chtml.js, chtml/woff2/*.woff2 and chtml/dynamic/*.js
+    # e.g. chtml.js, chtml/woff2/*.woff2 and chtml/dynamic/*.js. They go where MathJax loads them from by default, and
+    # also next to the MathJax package, the way npm installs them (node_modules/mathjax and node_modules/@mathjax),
+    # where sites hosting MathJax themselves tend to point it, e.g. CS50's assets/mathjax and assets/@mathjax
+    fonts_urls = dict.fromkeys([MATHJAX_4_FONTS_URL, urljoin(package_root, "../@mathjax").rstrip("/")])
     download_all_to_archive([
-        ("{}/{}-font{}".format(MATHJAX_4_FONTS_URL, font, path),
+        ("{}/{}-font{}".format(fonts_url, font, path),
          ["{}{}@{}{}".format(JSDELIVR_NPM_CDN, package, font_version, path)])
+        for fonts_url in fonts_urls
         for path in files if path == "/{}.js".format(output) or path.startswith("/{}/".format(output))
     ], archive_dir)
     return MATHJAX_4_FONTS_URL

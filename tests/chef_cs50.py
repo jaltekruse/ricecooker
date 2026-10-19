@@ -9,6 +9,7 @@ Videos are imported as their own video nodes, only the English 720p SDR MP4s. Pa
 dependency zip, like chef_pretext.py, and like it this runs twice, so that the second run can turn links between pages
 and to videos into navigation to the Kolibri nodes, using the node ids from the first run.
 """
+import json
 import os
 import re
 import shutil
@@ -34,12 +35,14 @@ from ricecooker.classes.nodes import HTML5AppNode
 from ricecooker.classes.nodes import TopicNode
 from ricecooker.classes.nodes import VideoNode
 from ricecooker.config import LOGGER
+from ricecooker.utils import downloader
 from ricecooker.utils import web
 from ricecooker.utils.downloader import archive_page
 from ricecooker.utils.zip import create_predictable_zip
 
 # reuse the scraping helpers written for PreTeXt books, e.g. building the shared dependency zip and handling MathJax
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import chef_pretext  # noqa: E402
 from chef_pretext import archive_path_for_url  # noqa: E402
 from chef_pretext import download_mathjax  # noqa: E402
 from chef_pretext import download_mathjax_loader_extensions  # noqa: E402
@@ -75,10 +78,29 @@ PRACTICE_PROBLEMS_PAGE = "practice/"
 VIDEO_RESOLUTION = "720p"
 # the labels of the lists of videos in other languages, which are skipped
 OTHER_LANGUAGE_LABELS = {"Portuguese", "Spanish"}
+# the asciinema player, which plays the problems' terminal recordings offline instead of embedding asciinema.org
+ASCIINEMA_PLAYER_URL = "https://cdn.jsdelivr.net/npm/asciinema-player@3/dist/bundle/"
+ASCIINEMA_PLAYER_FILES = ["asciinema-player.css", "asciinema-player.min.js", "asciinema-player-worker.min.js"]
+ASCIINEMA_SCRIPT_RE = re.compile(r"asciinema\.org/a/(\w+)\.js")
+# the emoji images the course's theme shows instead of emoji characters, set in its jekyll-theme-cs50.js
+TWEMOJI_BASE = "https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/"
+# emoji, optionally followed by a variation selector or skin tone, joined into sequences by zero width joiners, flags
+# and keycaps, close enough to what twemoji turns into images
+EMOJI_RE = re.compile(
+    "(?:[\U0001F1E6-\U0001F1FF]{2}"
+    "|[#*0-9]\uFE0F?\u20E3"
+    "|[\u2600-\u27BF\u2B00-\u2BFF\U0001F000-\U0001FAFF][\uFE0F\U0001F3FB-\U0001F3FF]?"
+    "(?:\u200D[\u2600-\u27BF\U0001F000-\U0001FAFF][\uFE0F\U0001F3FB-\U0001F3FF]?)*)")
+# the text of the buttons replacing embedded videos, the theme shows the play symbol as an emoji image too
+WATCH_BUTTON_TEXT = "\u25b6 Watch the video"
 # how the versions of the problems with the same name are told apart
 PROBLEM_VARIANTS = {"less": "Less Comfortable", "more": "More Comfortable"}
 # files linked from the pages small enough to include in the dependency zip, everything else stays a link to the web
 DEPENDENCY_FILE_EXTENSIONS = {".zip", ".pdf", ".txt", ".srt", ".c", ".h", ".py", ".sql", ".csv", ".html", ".js", ".css"}
+
+# fa.cs50.io, where the site's icons come from, refuses requests that don't come from one of CS50's pages
+for session in (downloader.DOWNLOAD_SESSION, chef_pretext.sess):
+    session.headers["Referer"] = COURSE_URL
 
 dep_zip = None
 # the urls of all of the pages, for building the dependency zip
@@ -115,6 +137,7 @@ class CS50xChef(SushiChef):
 
         # first work out the whole tree, so that the dependency zip can be built from all of the pages before any of
         # them are created, as the pages need the dependency zip's checksum
+        home = page_item(COURSE_URL, "Course Home")
         topics = [week_tree(week) for week in WEEKS]
         topics.append(pages_tree("Final Project", [(FINAL_PROJECT_PAGE, "Final Project")]))
         topics.append(problems_tree("Practice Problems", PRACTICE_PROBLEMS_PAGE))
@@ -123,6 +146,7 @@ class CS50xChef(SushiChef):
         if dep_zip is None:
             build_dependency_zip()
 
+        channel.add_child(build_page(home["url"], home["title"]))
         for topic in topics:
             channel.add_child(build_topic(topic))
         return channel
@@ -247,6 +271,8 @@ def build_topic(topic):
 def normalize_url(url):
     """drop the fragment, and add the / the site's pages are linked with, so the same page is always the same url"""
     url = urldefrag(url)[0]
+    if url == COURSE_URL.rstrip("/"):
+        return COURSE_URL
     path = urlparse(url).path
     if url.startswith(COURSE_URL) and not path.endswith("/") and not os.path.splitext(path)[1]:
         url += "/"
@@ -350,14 +376,54 @@ def build_dependency_zip():
             if is_dependency_file(file_url) and file_url not in link_targets:
                 download_to_archive(file_url, destpath)
 
+        for emoji in set(EMOJI_RE.findall(page.get_text() + WATCH_BUTTON_TEXT)):
+            download_to_archive(TWEMOJI_BASE + "72x72/" + twemoji_name(emoji) + ".png", destpath)
+
+        for script in page.find_all("script", src=ASCIINEMA_SCRIPT_RE):
+            recording = ASCIINEMA_SCRIPT_RE.search(script["src"]).group(1)
+            download_to_archive("https://asciinema.org/a/{}.cast".format(recording), destpath)
+
         # this removes resources from the parsed page, so it needs to be done last
         download_page_resources(page, url, destpath, downloaded_resource_urls)
+
+    for name in ASCIINEMA_PLAYER_FILES:
+        download_to_archive(ASCIINEMA_PLAYER_URL + name, destpath)
+    point_theme_at_local_emoji(destpath)
 
     with open(os.path.join(destpath, "index.html"), "wb") as f:
         f.write(("<html><body>This is the dependency zip</body></html>" + cache_invalidator_string).encode("utf-8"))
 
     global dep_zip
     dep_zip = create_predictable_zip(destpath)
+
+
+def twemoji_name(emoji):
+    """The name twemoji gives an emoji's image, its code points in hex, without variation selectors unless it's a
+    sequence joined by zero width joiners"""
+    if "\u200d" not in emoji:
+        emoji = emoji.replace("\ufe0f", "")
+    return "-".join("{:x}".format(ord(c)) for c in emoji)
+
+
+def point_theme_at_local_emoji(destpath):
+    """
+    The course's theme script has twemoji load the emoji images from jsDelivr, have it load the ones downloaded into
+    the dependency zip instead, relative to where the theme script is
+    """
+    for root, _, files in os.walk(destpath):
+        for name in files:
+            if name.startswith("jekyll-theme-cs50") and name.endswith(".js"):
+                path = os.path.join(root, name)
+                with open(path, encoding="utf-8") as f:
+                    js = f.read()
+                local_base = os.path.relpath(os.path.join(destpath, archive_path_for_url(TWEMOJI_BASE)), root) + "/"
+                patched = js.replace("base: '{}'".format(TWEMOJI_BASE), "base: CS50_THEME_DIR + '{}'".format(local_base))
+                if patched != js:
+                    # the directory the script was loaded from, which is only known while it first runs
+                    patched = ("var CS50_THEME_DIR = document.currentScript.src.replace(/[^\\/]*$/, '');\n"
+                               + patched)
+                    with open(path, "w", encoding="utf-8") as f:
+                        f.write(patched)
 
 
 def is_dependency_file(url):
@@ -395,7 +461,7 @@ def replace_embedded_videos(soup, page_url):
         youtube = re.search(r"(?:youtube\.com/embed/|youtu\.be/|video\.cs50\.io/)([\w-]{11})", src)
         if node_id:
             button = soup.new_tag("button", attrs={"onclick": navigation_script(node_id), "class": "btn btn-primary"})
-            button.string = "▶ Watch the video"
+            button.string = WATCH_BUTTON_TEXT
             frame.replace_with(button)
         elif youtube and "video.cs50.io" not in src:
             paragraph = soup.new_tag("p")
@@ -403,6 +469,33 @@ def replace_embedded_videos(soup, page_url):
             link.string = "Watch this video on YouTube (requires an internet connection)"
             paragraph.append(link)
             frame.replace_with(paragraph)
+
+
+def replace_asciinema_embeds(soup, dep_file_reference):
+    """
+    The problems' terminal recordings are embedded with asciinema.org's script, which plays them in an iframe from
+    asciinema.org. Play the recordings downloaded into the dependency zip with the asciinema player instead
+    """
+    embeds = [s for s in soup.find_all("script", src=True) if ASCIINEMA_SCRIPT_RE.search(s["src"])]
+    if not embeds:
+        return
+    player = dep_file_reference + archive_path_for_url(ASCIINEMA_PLAYER_URL)
+    head = soup.head or soup
+    head.append(soup.new_tag("link", rel="stylesheet", href=player + "asciinema-player.css"))
+    head.append(soup.new_tag("script", src=player + "asciinema-player.min.js"))
+    for embed in embeds:
+        recording = ASCIINEMA_SCRIPT_RE.search(embed["src"]).group(1)
+        options = {"autoPlay": embed.get("data-autoplay") == "1", "loop": embed.get("data-loop") == "1"}
+        for attribute, option in (("data-cols", "cols"), ("data-rows", "rows"), ("data-speed", "speed")):
+            if embed.get(attribute):
+                options[option] = float(embed[attribute]) if option == "speed" else int(embed[attribute])
+        container = soup.new_tag("div", id="asciicast-" + recording)
+        script = soup.new_tag("script")
+        script.string = "AsciinemaPlayer.create({}, document.getElementById({}), {});".format(
+            json.dumps(dep_file_reference + "asciinema.org/a/{}.cast".format(recording)),
+            json.dumps("asciicast-" + recording), json.dumps(options))
+        embed.replace_with(container)
+        container.insert_after(script)
 
 
 def build_page(url, title):
@@ -419,6 +512,7 @@ def build_page(url, title):
             for link in parser.get_links_in_parsed(soup, index_path) if link.startswith("./")
         }
         replace_embedded_videos(soup, url)
+        replace_asciinema_embeds(soup, dep_file_reference)
         rewrite_links(soup, url, dep_file_reference)
         point_mathjax_at_dependency_zip(soup, dep_file_reference)
         return parser.replace_links_in_parsed(links_to_replace, soup, index_path)
