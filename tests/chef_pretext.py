@@ -2,6 +2,7 @@
 import base64
 import concurrent.futures
 import hashlib
+import json
 import os
 import posixpath
 import re
@@ -71,6 +72,14 @@ BOOK_BASE_URL = DOMAIN
 TOC_PAGE = "thinkcspy-3.html"
 # only import sub-chapters whose number contains this string, set to None to import the whole book
 SUBCHAPTER_FILTER = "10."
+# To add or update a few pages without scraping the whole book again, set this to a regex matching the urls of the
+# pages to scrape again, e.g. r"license|thinkcspy-25", and every other page is reused from the copies the last run saved
+# in PAGE_CACHE_DIR. The whole tree is still built, so nothing is dropped from the channel. The pages matching it, and
+# the table of contents, are downloaded again rather than read from the http cache, as they've changed since it was
+# filled. None scrapes every page.
+REBUILD_PAGES = None
+# where each run saves the pages it builds and the dependency zip's files, for the runs using REBUILD_PAGES
+PAGE_CACHE_DIR = "pretext_page_cache"
 VIDEO_DIR = "/home/jason/scraping_sites/aYoutubeVidsForKolibri"
 
 
@@ -184,6 +193,9 @@ def add_subpages_from_pretext_toc(channel, list_url):
     #   1. the source of the page (e.g. https://en.wikipedia.org/wiki/List_of_citrus_fruits), or inspect in chrome dev tools
     #   2. the documentation for BeautifulSoup version 4: https://www.crummy.com/software/BeautifulSoup/bs4/doc/
 
+    if REBUILD_PAGES is not None:
+        refresh_from_server(list_url)
+
     # parse the the page into BeautifulSoup format, so we can loop through and manipulate it
     page = get_parsed_html_from_url(list_url)
 
@@ -218,6 +230,9 @@ def add_subpages_from_pretext_toc(channel, list_url):
         for _, chapter_summary_url, _, sub_chapters in chapters:
             all_page_urls.append(chapter_summary_url)
             all_page_urls.extend(sub_chap[0] for sub_chap in sub_chapters)
+        for page_url in all_page_urls:
+            if is_rebuilt(page_url):
+                refresh_from_server(page_url)
         download_depedency_zip_files(all_page_urls)
 
     for chapter_source_id, chapter_summary_url, title, sub_chapters in chapters:
@@ -251,6 +266,10 @@ def find_file_matching_pattern(root_directory, regex_pattern):
                 return full_path 
 
 def download_book_page(url, thumbnail, title, sub_chap_number):
+    cached = reuse_cached_page(url, thumbnail, title)
+    if cached:
+        return cached
+
     destpath = tempfile.mkdtemp()
     extra_content = []
 
@@ -396,6 +415,8 @@ def download_book_page(url, thumbnail, title, sub_chap_number):
     f.write((new_html + cache_invalidator_string).encode("utf-8"))
     f.close()
 
+    save_page_to_cache(url, new_dest, dep_zip_file.checksum, extra_content)
+
     # turn the temp folder into a zip file
     zippath = create_predictable_zip(new_dest)
 
@@ -422,6 +443,85 @@ def download_book_page(url, thumbnail, title, sub_chap_number):
     return (html5app, extra_content)
     #return html5app
 
+def is_rebuilt(url):
+    """whether to scrape the page at url again, rather than reusing the last run's copy (see REBUILD_PAGES)"""
+    return REBUILD_PAGES is None or re.search(REBUILD_PAGES, url) is not None
+
+
+def refresh_from_server(url):
+    """Download url again into the http caches, which otherwise keep serving the copy from when they were filled"""
+    for session in (sess, downloader.DOWNLOAD_SESSION):
+        try:
+            session.get(url, headers={"Cache-Control": "no-cache"})
+        except requests.RequestException as e:
+            LOGGER.warning("Could not download {} again: {}".format(url, e))
+
+
+def page_cache_dir(url):
+    # pages are built differently on the second run, with the links between nodes, so each run's are kept separately
+    run = "linked" if orig_urls_to_node_ids else "unlinked"
+    return os.path.join(PAGE_CACHE_DIR, "pages", run, re.sub(r"[^\w.-]", "_", url))
+
+
+def save_page_to_cache(url, page_dir, dep_checksum, videos):
+    cache_dir = page_cache_dir(url)
+    shutil.rmtree(cache_dir, ignore_errors=True)
+    shutil.copytree(page_dir, os.path.join(cache_dir, "page"))
+    with open(os.path.join(cache_dir, "page.json"), "w") as f:
+        json.dump({
+            "dep_checksum": dep_checksum,
+            # the videos found on the page, which are normally added to the tree while scraping the page
+            "videos": [{"source_id": video.source_id, "title": video.title, "path": video.files[0].path,
+                        "source_url": video.files[0].source_url} for video in videos],
+        }, f, indent=1)
+
+
+def reuse_cached_page(url, thumbnail, title):
+    """
+    The (page node, video nodes) download_book_page returns, from the copy of the page the last run saved, for pages
+    REBUILD_PAGES doesn't match. None if the page should be scraped again
+    """
+    if is_rebuilt(url):
+        return None
+    cache_dir = page_cache_dir(url)
+    if not os.path.isfile(os.path.join(cache_dir, "page.json")):
+        LOGGER.warning("No saved copy of {}, scraping it again".format(url))
+        return None
+    with open(os.path.join(cache_dir, "page.json")) as f:
+        saved = json.load(f)
+
+    dep_zip_file = HTMLZipFile(dep_zip, preset=format_presets.HTML5_DEPENDENCY_ZIP)
+    page_dir = tempfile.mkdtemp()
+    shutil.copytree(os.path.join(cache_dir, "page"), page_dir, dirs_exist_ok=True)
+    # the page loads its resources from the dependency zip by its checksum, which changes when a rebuilt page adds files
+    if saved["dep_checksum"] != dep_zip_file.checksum:
+        old, new = ("/zipcontent/{}.zip/".format(c) for c in (saved["dep_checksum"], dep_zip_file.checksum))
+        for root, _, files in os.walk(page_dir):
+            for name in files:
+                if name.endswith(".html"):
+                    path = os.path.join(root, name)
+                    with open(path, encoding="utf-8") as f:
+                        html = f.read()
+                    with open(path, "w", encoding="utf-8") as f:
+                        f.write(html.replace(old, new))
+
+    videos = [VideoNode(source_id=video["source_id"], title=video["title"], license=license, copyright_holder=copyright,
+                        license_description=license_description,
+                        files=[VideoFile(path=video["path"], preset=format_presets.VIDEO_LOW_RES,
+                                         source_url=video["source_url"])])
+              for video in saved["videos"]]
+    html5app = HTML5AppNode(
+        files=[HTMLZipFile(create_predictable_zip(page_dir)), dep_zip_file],
+        title=title,
+        thumbnail=thumbnail,
+        source_id=url.split("/")[-1],
+        license=license,
+        copyright_holder=copyright,
+        license_description=license_description,
+    )
+    return (html5app, videos)
+
+
 def download_depedency_zip_files(page_urls):
     """
     Build the dependency zip shared by all of the pages, containing the static resources referenced directly in the
@@ -434,6 +534,19 @@ def download_depedency_zip_files(page_urls):
 
     scanned_scripts = set()
     downloaded_resource_urls = set()
+
+    # when only rebuilding some pages, start from the last run's dependency files and only add the rebuilt pages' ones
+    cached_files = os.path.join(PAGE_CACHE_DIR, "dependencies")
+    cached_state = os.path.join(PAGE_CACHE_DIR, "dependencies.json")
+    if REBUILD_PAGES is not None and os.path.isfile(cached_state):
+        shutil.copytree(cached_files, destpath, dirs_exist_ok=True)
+        with open(cached_state) as f:
+            state = json.load(f)
+        # the resources already processed, download_static_assets breaks the links in css files it processes twice
+        scanned_scripts.update(state["scanned_scripts"])
+        downloaded_resource_urls.update(state["downloaded_resource_urls"])
+        page_urls = [url for url in page_urls if is_rebuilt(url)]
+
     for url in page_urls:
         page = get_parsed_html_from_url(url)
 
@@ -456,6 +569,13 @@ def download_depedency_zip_files(page_urls):
         download_page_resources(page, url, destpath, downloaded_resource_urls)
 
     shutil.copy(os.path.join(VIDEO_DIR, "video_placeholder.png"), destpath)
+
+    # save the dependency files for later runs only rebuilding some pages
+    shutil.rmtree(cached_files, ignore_errors=True)
+    shutil.copytree(destpath, cached_files)
+    with open(cached_state, "w") as f:
+        json.dump({"scanned_scripts": sorted(scanned_scripts),
+                   "downloaded_resource_urls": sorted(downloaded_resource_urls)}, f)
 
     f = open(destpath + "/index.html", "wb")
     global cache_invalidator_string
