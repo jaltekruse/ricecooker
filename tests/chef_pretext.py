@@ -199,22 +199,20 @@ def add_subpages_from_pretext_toc(channel, list_url):
     chapters = []
     for chapter in list(table.children)[0].find_all("li", recursive=False):
 
-        chapter_number = chapter.findNext("span").text
-        chapter_title = chapter_number + " - " + chapter.findNext("span").findNext("span").text
-        chapter_summary_url = urljoin(list_url, chapter.findNext("a").attrs["href"])
+        chapter_href, chapter_number, chapter_title = toc_entry(chapter)
+        chapter_summary_url = urljoin(list_url, chapter_href)
 
         sub_chapters = []
         if CHAPTER_FILTER is None or CHAPTER_FILTER in chapter_title:
             for sub_chapter in list(chapter.find_all("ul", recursive=False))[0].find_all("li", recursive=False):
-                sub_chap_number = sub_chapter.findNext("span").text
-                sub_chap_title = sub_chap_number + " - " + sub_chapter.findNext("span").findNext("span").text
+                sub_chap_href, sub_chap_number, sub_chap_title = toc_entry(sub_chapter)
 
                 if SUBCHAPTER_FILTER is None or SUBCHAPTER_FILTER in sub_chap_title:
-                    sub_chap_url = urljoin(list_url, list(sub_chapter.find_all("a", recursive="False"))[0].attrs["href"])
+                    sub_chap_url = urljoin(list_url, sub_chap_href)
                     sub_chapters.append((sub_chap_url, sub_chap_title, sub_chap_number))
 
         if sub_chapters:
-            chapters.append((chapter.findNext("a").attrs["href"], chapter_summary_url, chapter_title, sub_chapters))
+            chapters.append((chapter_href, chapter_summary_url, chapter_title, sub_chapters))
 
     if dep_zip is None:
         all_page_urls = []
@@ -240,6 +238,22 @@ def add_subpages_from_pretext_toc(channel, list_url):
         channel.add_child(chapter_topic)
 
     return None
+
+
+def toc_entry(item):
+    """
+    (href, number, title) for an entry in the table of contents, e.g. ("general-intro_algorithms.html", "1.2",
+    "1.2 - Algorithms"). Front matter, and some of the back matter like the index, have no number, e.g.
+    <a href="..."><span class="title">Preface</span></a>, so their title is just "Preface".
+
+    find() only searches inside the entry, unlike findNext(), which keeps going into the entries after it
+    """
+    # the entry's own link comes before the links of the entries nested in it
+    link = item.find("a")
+    number = link.find("span", class_="codenumber")
+    number = number.get_text(strip=True) if number else ""
+    title = link.find("span", class_="title").get_text(strip=True)
+    return link["href"], number, "{} - {}".format(number, title) if number else title
 
 
 def find_file_matching_pattern(root_directory, regex_pattern):
