@@ -41,10 +41,10 @@ from le_utils.constants.labels import subjects
 SOURCE_DOMAIN = "https://runestone.academy/ns/books/published/FOPP-PIE/ThinkLikeComputer.html"
 # SOURCE_ID = "thinkcspi_runestone_academy"  # an alphanumeric ID refering to this channel
 # CHANNEL_TITLE = "How to Think Like a Computer Scientist, Interactive Edition"  # a humand-readbale title
-SOURCE_ID = "thinkcspy_runestone_academy_oct6_test_2026"  # an alphanumeric ID refering to this channel
+SOURCE_ID = "thinkcspy_runestone_academy"  # an alphanumeric ID refering to this channel
 CHANNEL_TITLE = "How to Think Like a Computer Scientist, Interactive Edition"  # a humand-readbale title
 
-copyright = "Brad Miller, Paul Resnick, Lauren Murphy, Jeffrey Elkner, Peter Wentworth, Allen B. Downey, Chris Meyers, and Dario Mitchell."
+copyright = "Brad Miller, David Ranum, Jeffrey Elkner, Peter Wentworth, Allen B. Downey, Chris Meyers, and Dario Mitchell."
 license = licenses.SpecialPermissionsLicense(
                     description="GNU Free Documentation License - Version 1.3",
                     copyright_holder=copyright)
@@ -65,7 +65,7 @@ BOOK_BASE_URL = DOMAIN
 # page in the book with the full table of contents
 TOC_PAGE = "thinkcspy-3.html"
 # only import sub-chapters whose number contains this string, set to None to import the whole book
-SUBCHAPTER_FILTER = "10."
+SUBCHAPTER_FILTER = None
 # Fallback used if the MathJax files can't be listed from jsDelivr
 MATHJAX_LOCAL_ES5_DIR = "/home/jason/src/MathJax/es5"
 VIDEO_DIR = "/home/jason/scraping_sites/aYoutubeVidsForKolibri"
@@ -130,6 +130,7 @@ class WikipediaChef(SushiChef):
                 "basic concepts and gradually adds new material."),
             thumbnail="https://python.camden.rutgers.edu/python_resources/python3_book/_images/gasp_lessons.png",
             license=license,
+            author=copyright,
             copyright_holder=copyright,
             license_description=license_description,
             language=CHANNEL_LANGUAGE,
