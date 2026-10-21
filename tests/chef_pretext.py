@@ -56,7 +56,7 @@ license_description="GNU Free Documentation License - Version 1.3"
 
 #SOURCE_ID = "jason_pretext_test_new_id"  # an alphanumeric ID refering to this channel
 #CHANNEL_TITLE = "Jason PreteXt testing"
-BOOK_PORT = 8081
+BOOK_PORT = 8080
 CHANNEL_LANGUAGE = "en"  # language of channel
 DOMAIN = f"http://localhost:{BOOK_PORT}/"
 # directory the book's html pages are served from, this can point at a book hosted online like
@@ -66,6 +66,7 @@ BOOK_BASE_URL = DOMAIN
 TOC_PAGE = "thinkcspy-3.html"
 # only import sub-chapters whose number contains this string, set to None to import the whole book
 SUBCHAPTER_FILTER = None
+CHAPTER_FILTER = "Front Matter"
 # Fallback used if the MathJax files can't be listed from jsDelivr
 MATHJAX_LOCAL_ES5_DIR = "/home/jason/src/MathJax/es5"
 VIDEO_DIR = "/home/jason/scraping_sites/aYoutubeVidsForKolibri"
@@ -187,20 +188,21 @@ def add_subpages_from_pretext_toc(channel, list_url):
     for chapter in list(table.children)[0].find_all("li", recursive=False):
 
         chapter_number = chapter.findNext("span").text
-        title = chapter_number + " - " + chapter.findNext("span").findNext("span").text
+        chapter_title = chapter_number + " - " + chapter.findNext("span").findNext("span").text
         chapter_summary_url = urljoin(list_url, chapter.findNext("a").attrs["href"])
 
         sub_chapters = []
-        for sub_chapter in list(chapter.find_all("ul", recursive=False))[0].find_all("li", recursive=False):
-            sub_chap_number = sub_chapter.findNext("span").text
-            sub_chap_title = sub_chap_number + " - " + sub_chapter.findNext("span").findNext("span").text
+        if CHAPTER_FILTER is None or CHAPTER_FILTER in chapter_title:
+            for sub_chapter in list(chapter.find_all("ul", recursive=False))[0].find_all("li", recursive=False):
+                sub_chap_number = sub_chapter.findNext("span").text
+                sub_chap_title = sub_chap_number + " - " + sub_chapter.findNext("span").findNext("span").text
 
-            if SUBCHAPTER_FILTER is None or SUBCHAPTER_FILTER in sub_chap_title:
-                sub_chap_url = urljoin(list_url, list(sub_chapter.find_all("a", recursive="False"))[0].attrs["href"])
-                sub_chapters.append((sub_chap_url, sub_chap_title, sub_chap_number))
+                if SUBCHAPTER_FILTER is None or SUBCHAPTER_FILTER in sub_chap_title:
+                    sub_chap_url = urljoin(list_url, list(sub_chapter.find_all("a", recursive="False"))[0].attrs["href"])
+                    sub_chapters.append((sub_chap_url, sub_chap_title, sub_chap_number))
 
         if sub_chapters:
-            chapters.append((chapter.findNext("a").attrs["href"], chapter_summary_url, title, sub_chapters))
+            chapters.append((chapter.findNext("a").attrs["href"], chapter_summary_url, chapter_title, sub_chapters))
 
     if dep_zip is None:
         all_page_urls = []
@@ -209,11 +211,11 @@ def add_subpages_from_pretext_toc(channel, list_url):
             all_page_urls.extend(sub_chap[0] for sub_chap in sub_chapters)
         download_depedency_zip_files(all_page_urls)
 
-    for chapter_source_id, chapter_summary_url, title, sub_chapters in chapters:
-        chapter_topic = TopicNode(source_id=chapter_source_id, title=title)
+    for chapter_source_id, chapter_summary_url, chapter_title, sub_chapters in chapters:
+        chapter_topic = TopicNode(source_id=chapter_source_id, title=chapter_title)
 
         # add a page for the chapter overview, to give us a place to link to for that entry in the table of contents
-        chapter_html5app = download_book_page(chapter_summary_url, thumbnail=None, title=title, sub_chap_number=sub_chapters[0][2])
+        chapter_html5app = download_book_page(chapter_summary_url, thumbnail=None, title=chapter_title, sub_chap_number=sub_chapters[0][2])
         chapter_topic.add_child(chapter_html5app[0])
 
         for sub_chap_url, sub_chap_title, sub_chap_number in sub_chapters:
