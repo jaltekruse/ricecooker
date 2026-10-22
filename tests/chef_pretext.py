@@ -18,7 +18,7 @@ import requests
 from bs4 import BeautifulSoup
 
 from ricecooker.chefs import SushiChef
-from ricecooker.classes import licenses
+from ricecooker.classes.licenses import get_license
 from ricecooker.classes.files import HTMLZipFile, VideoFile, WebVideoFile, YouTubeVideoFile
 from ricecooker.classes.nodes import ChannelNode, VideoNode
 from ricecooker.classes.nodes import HTML5AppNode
@@ -32,7 +32,7 @@ from ricecooker.utils.html import download_file
 from ricecooker.utils import downloader, web
 
 from ricecooker.utils.zip import create_predictable_zip
-from le_utils.constants import file_formats, format_presets
+from le_utils.constants import file_formats, format_presets, licenses
 
 from le_utils.constants.labels import accessibility_categories
 from le_utils.constants.labels import learning_activities
@@ -43,20 +43,23 @@ from le_utils.constants.labels import subjects
 
 
 # CHANNEL SETTINGS
-SOURCE_DOMAIN = "https://runestone.academy/ns/books/published/FOPP-PIE/ThinkLikeComputer.html"
+SOURCE_DOMAIN = "https://activecalculus.org/single2e/frontmatter.html"
 # SOURCE_ID = "thinkcspi_runestone_academy"  # an alphanumeric ID refering to this channel
 # CHANNEL_TITLE = "How to Think Like a Computer Scientist, Interactive Edition"  # a humand-readbale title
-SOURCE_ID = "thinkcspy_runestone_academy"  # an alphanumeric ID refering to this channel
+#SOURCE_ID = "thinkcspy_runestone_academy"  # an alphanumeric ID refering to this channel
+SOURCE_ID = "active_calculus_boelkins"  # an alphanumeric ID refering to this channel
 # a human-readable title, None uses the book's title and subtitle from the header of its pages, e.g. "Active Calculus: 2nd Ed"
 CHANNEL_TITLE = None
 # the channel's image when the book's header doesn't have a logo, the logo is used when it does
 CHANNEL_THUMBNAIL = "https://python.camden.rutgers.edu/python_resources/python3_book/_images/gasp_lessons.png"
 
-copyright = "Brad Miller, David Ranum, Jeffrey Elkner, Peter Wentworth, Allen B. Downey, Chris Meyers, and Dario Mitchell."
-license = licenses.SpecialPermissionsLicense(
-                    description="GNU Free Documentation License - Version 1.3",
-                    copyright_holder=copyright)
-license_description="GNU Free Documentation License - Version 1.3"
+copyright = "2012-2025 Matthew Boelkins"
+# license = licenses.get_license(licenses.SPECIAL_PERMISSIONS,
+#                     description="GNU Free Documentation License - Version 1.3",
+#                     copyright_holder=copyright)
+# license_description="GNU Free Documentation License - Version 1.3"
+license = get_license(licenses.CC_BY_SA, copyright_holder=copyright)
+license_description=""
 
 # youtube ids {'SGVgAV0v-Ww', 'Yxyx6KpKRzY', 'aqhREpceEMI', '3WgmLIsXFkI', '57dPVbnRouU', 'YK8QlIT3__M', 'xGSfiZt5cdw',
 # 'GCLHuPBtLdQ', 'Fd4a8ktQURc', 'blTBEqybQmQ', 'vNfCfowr-pQ', 'HriDtn-0Dcw', 'LD-F4RODy-I', '1uQM-TVlaMo', 'LZ7H1X8ar9E',
@@ -66,15 +69,15 @@ license_description="GNU Free Documentation License - Version 1.3"
 #CHANNEL_TITLE = "Jason PreteXt testing"
 BOOK_PORT = 8080
 CHANNEL_LANGUAGE = "en"  # language of channel
-DOMAIN = f"http://localhost:{BOOK_PORT}/"
+DOMAIN = f"https://activecalculus.org/single2e/"
 # directory the book's html pages are served from, this can point at a book hosted online like
 # "https://runestone.academy/ns/books/published/thinkcspy/", it must end with a /
 BOOK_BASE_URL = DOMAIN
 # page in the book with the full table of contents
-TOC_PAGE = "thinkcspy-3.html"
+TOC_PAGE = "frontmatter.html"
 # only import sub-chapters whose number contains this string, set to None to import the whole book
-SUBCHAPTER_FILTER = None
-CHAPTER_FILTER = "Front Matter"
+SUBCHAPTER_FILTER = "1."
+CHAPTER_FILTER = None
 VIDEO_DIR = "/home/jason/scraping_sites/aYoutubeVidsForKolibri"
 
 
@@ -297,7 +300,7 @@ def find_file_matching_pattern(root_directory, regex_pattern):
             if compiled_regex.search(filename):
                 # Construct the relative path to the file
                 full_path = os.path.join(root, filename)
-                return full_path 
+                return full_path
 
 def download_book_page(url, thumbnail, title, sub_chap_number):
     destpath = tempfile.mkdtemp()
@@ -349,6 +352,14 @@ def download_book_page(url, thumbnail, title, sub_chap_number):
 
 
         page = soup
+
+        # webwork excercises rely on an external server, disable the "activate" buttons
+        # that will just cause confusion, classes can still make use of the static versions
+        # of the questions that are rendered by default
+        all_webwork_buttons = page.find_all("button", class_="webwork-button")
+        for webwork_button in all_webwork_buttons:
+            webwork_button['style'] = "display:none"
+
         all_videos = page.find_all("iframe", class_="video")
         if (all_videos):
 
@@ -367,7 +378,7 @@ def download_book_page(url, thumbnail, title, sub_chap_number):
                 video_file = find_file_matching_pattern(VIDEO_DIR, f".*{video_id_modified}.*")
                 video_title = f"Video - {sub_chap_number} - " + re.search(r".*YouTube_(.*)_Media_.*", video_file).group(1)
                 wvf = VideoFile(path=video_file, preset=format_presets.VIDEO_LOW_RES, source_url=regular_youtube_url)
-                node = VideoNode(source_id=video_id, title=video_title, 
+                node = VideoNode(source_id=video_id, title=video_title,
                                 license=license,
                                 copyright_holder=copyright,
                                 license_description=license_description,
@@ -377,7 +388,7 @@ def download_book_page(url, thumbnail, title, sub_chap_number):
                 # replace the youtube embedd with a link to the video in the Kolibri tree
                 if (orig_urls_to_node_ids):
                     on_click = f"window.kolibri.navigateTo('{orig_urls_to_node_ids[video_id]}')"
-                    new_video_link = page.new_tag("button", attrs={"onClick": 
+                    new_video_link = page.new_tag("button", attrs={"onClick":
                                 on_click})
                     new_video_link.string = video_title
                     video_placeholder_img = page.new_tag("img", attrs={
@@ -386,7 +397,7 @@ def download_book_page(url, thumbnail, title, sub_chap_number):
                     video.insert_before(video_placeholder_img)
                     video.insert_before(page.new_tag("br"))
                     video.replace_with(new_video_link)
-            
+
             print(extra_content)
 
         # knowls are html snippets that are lazily loaded when clicked on, find them now while we have the parsed page
@@ -404,7 +415,7 @@ def download_book_page(url, thumbnail, title, sub_chap_number):
     # shutil.rmtree(mathjax_dest + "es5")
     # shutil.copytree("/home/jason/src/MathJax/es5", mathjax_dest + "/es5")
 
-    
+
     with open(index_path, 'r', encoding='utf-8') as file:
         new_html = file.read()
 
@@ -413,8 +424,8 @@ def download_book_page(url, thumbnail, title, sub_chap_number):
     new_html = new_html.replace("\"_static", "\"" + dep_file_reference + archive_path_for_url(urljoin(url, "_static")))
 
     new_html = replace_links_to_other_pages(new_html)
-        
- 
+
+
     # other URLs above
     # TODO - use beautifulSoup to parse the page and replace the youtube embed with something, a link, maybe a generic
     # image that looks like a video with a play button, that will link to the resource for each video.
