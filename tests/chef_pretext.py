@@ -47,7 +47,10 @@ SOURCE_DOMAIN = "https://runestone.academy/ns/books/published/FOPP-PIE/ThinkLike
 # SOURCE_ID = "thinkcspi_runestone_academy"  # an alphanumeric ID refering to this channel
 # CHANNEL_TITLE = "How to Think Like a Computer Scientist, Interactive Edition"  # a humand-readbale title
 SOURCE_ID = "thinkcspy_runestone_academy"  # an alphanumeric ID refering to this channel
-CHANNEL_TITLE = "How to Think Like a Computer Scientist, Interactive Edition"  # a humand-readbale title
+# a human-readable title, None uses the book's title and subtitle from the header of its pages, e.g. "Active Calculus: 2nd Ed"
+CHANNEL_TITLE = None
+# the channel's image when the book's header doesn't have a logo, the logo is used when it does
+CHANNEL_THUMBNAIL = "https://python.camden.rutgers.edu/python_resources/python3_book/_images/gasp_lessons.png"
 
 copyright = "Brad Miller, David Ranum, Jeffrey Elkner, Peter Wentworth, Allen B. Downey, Chris Meyers, and Dario Mitchell."
 license = licenses.SpecialPermissionsLicense(
@@ -132,16 +135,17 @@ def get_parsed_html_from_url(url, *args, **kwargs):
 
 class WikipediaChef(SushiChef):
     def get_channel(self, *args, **kwargs):
+        book_title, book_logo = book_header(BOOK_BASE_URL + TOC_PAGE)
 
         channel = ChannelNode(
             source_domain=SOURCE_DOMAIN,
             source_id=SOURCE_ID,
-            title=CHANNEL_TITLE,
+            title=CHANNEL_TITLE or book_title,
             description=
                 ("A concise introduction to software design using the Python programming language. "
                 "Intended for people with no programming experience, this book starts with the most "
                 "basic concepts and gradually adds new material."),
-            thumbnail="https://python.camden.rutgers.edu/python_resources/python3_book/_images/gasp_lessons.png",
+            thumbnail=book_logo or CHANNEL_THUMBNAIL,
             license=license,
             author=copyright,
             copyright_holder=copyright,
@@ -178,6 +182,34 @@ class WikipediaChef(SushiChef):
         # raise "exit early please"
 
         return channel
+
+
+def book_header(page_url):
+    """
+    (title, logo url) from the banner at the top of the book's pages, e.g. for
+        <div class="ptx-banner">
+            <a class="logo-link" href="..."><img src="external/images/ACS2E-cover.png" alt="Logo image"></a>
+            <div class="title-container">
+                <div class="heading"><a href="..."><span class="title">Active Calculus</span>
+                    <span class="subtitle">2nd Ed</span></a></div>
+        ("Active Calculus: 2nd Ed", "<book url>/external/images/ACS2E-cover.png"). The logo is None for books without
+    one, and the title is None if the page has no banner
+    """
+    banner = get_parsed_html_from_url(page_url).find(class_="ptx-banner")
+    if not banner:
+        LOGGER.warning("No PreTeXt banner found on {}, set CHANNEL_TITLE".format(page_url))
+        return None, None
+
+    heading = banner.find(class_="title-container")
+    title = heading.find(class_="title") if heading else None
+    subtitle = heading.find(class_="subtitle") if heading else None
+    full_title = ": ".join(part.get_text(" ", strip=True) for part in (title, subtitle)
+                           if part and part.get_text(strip=True)) or None
+
+    # the logo is the banner's image outside of the title
+    logo = next((image for image in banner.find_all("img", src=True)
+                 if not (heading and heading in image.parents)), None)
+    return full_title, urljoin(page_url, logo["src"]) if logo else None
 
 
 def add_subpages_from_pretext_toc(channel, list_url):
