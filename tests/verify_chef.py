@@ -13,7 +13,8 @@ the second run can be checked too. Then it checks:
 
 - the tree: node counts, empty topics, duplicate titles and source ids, nodes failing ricecooker's validation, which
   video files and subtitles the videos have, and that the documents' files exist
-- the pages, statically: every file a page references in its dependency zip (/zipcontent/<checksum>.zip/...) is in it,
+- the pages, statically: every file a page references in its dependency zip (/zipcontent/<checksum>.zip/... or
+  ../<checksum>.zip/...) is in it,
   relative references resolve inside the page's own zip, navigation goes to nodes that exist, and which links still go
   to the source site and which resources still come from the internet
 - with --browser, each page loaded in headless Chromium from a server laid out like Kolibri's zipcontent, with every
@@ -46,7 +47,9 @@ from bs4 import BeautifulSoup
 # how many examples of each problem to show in the summary, the report has all of them
 EXAMPLES_SHOWN = 5
 BROWSER_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "verify_pages.js")
-ZIPCONTENT_RE = re.compile(r"/zipcontent/([0-9a-f]{32})\.zip/([^\"'\s)<>]*)")
+# a page's references into its dependency zip, /zipcontent/<checksum>.zip/... or relative to the page's own zip,
+# ../<checksum>.zip/...
+ZIPCONTENT_RE = re.compile(r"(?:/zipcontent/|\.\./)([0-9a-f]{32})\.zip/([^\"'\s)<>]*)")
 NAVIGATE_RE = re.compile(r"navigateTo\(\s*['\"]([^'\"]+)['\"]")
 # tags whose attribute references a resource the page loads, rather than a page it links to
 RESOURCE_ATTRIBUTES = {"img": "src", "script": "src", "iframe": "src", "source": "src", "video": "src", "audio": "src",
@@ -288,7 +291,8 @@ def check_pages(channel, node_ids, report):
                 parsed = urlparse(value)
                 if parsed.scheme in ("http", "https") or value.startswith("//"):
                     external[parsed.netloc] += 1
-                elif not parsed.scheme and not value.startswith(("/", "#")) and value:
+                elif not parsed.scheme and not value.startswith(("/", "#")) and value \
+                        and not ZIPCONTENT_RE.match(value):
                     path = unquote(parsed.path).lstrip("./")
                     if path and path not in page.own_files:
                         unresolved.append("{!r}: <{} {}={!r}>".format(page.title, tag, attribute, value))

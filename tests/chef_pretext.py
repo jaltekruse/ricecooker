@@ -2,9 +2,12 @@
 import base64
 import concurrent.futures
 import hashlib
+import io
+import json
 import os
 import posixpath
 import re
+import tarfile
 import tempfile
 from urllib.parse import quote
 from urllib.parse import urldefrag
@@ -331,7 +334,9 @@ def download_book_page(url, thumbnail, title, sub_chap_number):
         #print("JASON DEBUG - #$%@#!$^#$%^^@#$%&^#$%%@$#%@#%$#@%@#$%@#$%@#$%@#$%@#$%@#$%@#$%#&&^(*(")
         #print(dep_zip_file.preset)
 
-        dep_file_reference = '/zipcontent/{}.zip/'.format(dep_zip_file.checksum)
+        # relative to the page's own zip, e.g. /zipcontent/<page>.zip/index.html, so it works wherever Kolibri serves
+        # zips from, like the /content/zipcontent/ of a separate content server
+        dep_file_reference = '../{}.zip/'.format(dep_zip_file.checksum)
 
         for link in local_links:
             # if pie_ref in link:
@@ -404,6 +409,8 @@ def download_book_page(url, thumbnail, title, sub_chap_number):
         knowls.update(fetch_knowls(soup, url))
 
         point_mathjax_at_dependency_zip(soup, dep_file_reference)
+        point_interactives_at_dependency_zip(soup, url, dep_file_reference)
+        point_module_imports_at_dependency_zip(soup, url, dep_file_reference)
 
         return parser.replace_links_in_parsed(links_to_replace, soup, index_path)
 
@@ -494,6 +501,8 @@ def download_depedency_zip_files(page_urls):
 
     scanned_scripts = set()
     downloaded_resource_urls = set()
+    # the pages interactives are shown in, like DoenetML activities, which PreTeXt builds next to the book's pages
+    interactive_urls = set()
     for url in page_urls:
         page = get_parsed_html_from_url(url)
 
@@ -501,6 +510,9 @@ def download_depedency_zip_files(page_urls):
         # each page, but the resources they reference go in this zip
         for knowl_html in fetch_knowls(page, url).values():
             download_knowl_resources(knowl_html, url, destpath)
+            interactive_urls.update(frame_url for _, frame_url in interactive_frames(parse_html(knowl_html), url))
+
+        interactive_urls.update(frame_url for _, frame_url in interactive_frames(page, url))
 
         for script in page.find_all("script", src=True):
             script_url = urljoin(url, script["src"])
@@ -511,11 +523,22 @@ def download_depedency_zip_files(page_urls):
                 download_webpack_lazy_chunks(script_url, destpath)
 
         download_mathjax_loader_extensions(page, url, destpath)
+        download_page_module_imports(page, url, destpath)
 
         # this removes resources from the parsed page, so it needs to be done last
         download_page_resources(page, url, destpath, downloaded_resource_urls)
 
-    shutil.copy(os.path.join(VIDEO_DIR, "video_placeholder.png"), destpath)
+        # after download_page_resources, which also saves the coordinator script the page loads from the package
+        for script_url in scanned_scripts:
+            download_npm_package_for_url(script_url, destpath)
+
+    # done after the pages, so they can use the copy of MathJax the pages load
+    for frame_url in sorted(interactive_urls):
+        download_interactive_page(frame_url, destpath)
+
+    placeholder = os.path.join(VIDEO_DIR, "video_placeholder.png")
+    if os.path.exists(placeholder):
+        shutil.copy(placeholder, destpath)
 
     f = open(destpath + "/index.html", "wb")
     global cache_invalidator_string
@@ -701,6 +724,7 @@ def rewrite_knowl_for_page(knowl_html, page_url, dep_file_reference):
     for node, attr, resource_url in knowl_resources(knowl, page_url):
         if urlparse(resource_url).scheme in ("http", "https"):
             node[attr] = dep_file_reference + archive_path_for_url(resource_url)
+    point_interactives_at_dependency_zip(knowl, page_url, dep_file_reference)
     return replace_links_to_other_pages(str(knowl))
 
 
@@ -835,7 +859,7 @@ def download_mathjax(script_url, page, page_url, archive_dir):
         fonts_url = download_mathjax_4_font(version, script_path, page, archive_dir, package_root)
 
     archived_src = downloader.get_archive_filename(script_url, archive_dir, page_url)
-    mathjax_scripts[archived_src] = {"url": script_url, "fonts_url": fonts_url}
+    mathjax_scripts[archived_src] = {"url": script_url, "fonts_url": fonts_url, "major_version": major_version}
     return True
 
 
@@ -909,13 +933,228 @@ def point_mathjax_at_dependency_zip(page, dep_file_reference):
         query = urlparse(info["url"]).query
         script["src"] = dep_file_reference + archive_path_for_url(info["url"]) + ("?" + query if query else "")
         if info["fonts_url"]:
-            # unless the page sets it, MathJax 4 loads fonts from jsDelivr instead of relative to itself
-            set_fonts_path = page.new_tag("script")
-            set_fonts_path.string = (
-                "window.MathJax = window.MathJax || {}; MathJax.loader = MathJax.loader || {}; "
-                "MathJax.loader.paths = Object.assign({fonts: '%s'}, MathJax.loader.paths);"
-                % (dep_file_reference + archive_path_for_url(info["fonts_url"])))
-            script.insert_before(set_fonts_path)
+            set_mathjax_fonts_path(page, script, dep_file_reference + archive_path_for_url(info["fonts_url"]))
+
+
+def set_mathjax_fonts_path(page, script, fonts_path):
+    """
+    Unless the page sets it, MathJax 4 loads fonts from jsDelivr instead of relative to itself, so add a script before
+    the page's MathJax script setting where to load them from, fonts_path, relative to the page.
+
+    When MathJax is deferred, the path is set in a module script, which runs in order with deferred scripts once the
+    page is parsed. Otherwise it would be lost when the page configures MathJax in a module or deferred script that
+    replaces window.MathJax, like the startMathJax PreTeXt pages call from a module script.
+    """
+    set_fonts_path = page.new_tag("script")
+    if script.has_attr("defer"):
+        set_fonts_path["type"] = "module"
+    set_fonts_path.string = (
+        "window.MathJax = window.MathJax || {}; MathJax.loader = MathJax.loader || {}; "
+        "MathJax.loader.paths = Object.assign({fonts: new URL(%s, location.href).href}, MathJax.loader.paths);"
+        % json.dumps(fonts_path))
+    script.insert_before(set_fonts_path)
+
+
+# Interactives, like DoenetML activities, are iframes showing pages PreTeXt builds next to the book's pages, named
+# after the interactive, e.g. <iframe src="int-PA-1-1-D-if.html" data-doenet-coordinate="true">
+INTERACTIVE_PAGE_SUFFIX = "-if.html"
+
+# npm packages pages load from jsDelivr that then load more of their own files as they need them, so the whole package
+# is downloaded, with files that are never needed skipped. The DoenetML viewer (doenet-standalone.js) and the
+# coordinator book pages use to run many activities load chunks, the core worker and its .wasm, and translations
+# relative to themselves, see https://github.com/Doenet/DoenetML/tree/main/packages/standalone
+WHOLE_NPM_PACKAGES = [
+    # (pattern for URLs in the package, capturing the package name and version, files to skip)
+    (re.compile(r"^https?://cdn\.jsdelivr\.net/npm/(@doenet/standalone)@([^/]+)/"),
+     # source maps, types, and a copy of the viewer with every chunk inlined, for hosts that can't serve the chunks
+     re.compile(r"\.map$|\.d\.ts$|^doenet-standalone-inline\.js$")),
+]
+NPM_REGISTRY = "https://registry.npmjs.org/"
+# the MathJax the DoenetML viewer loads when the page it is in doesn't load MathJax itself
+DOENET_DEFAULT_MATHJAX_URL = "https://cdn.jsdelivr.net/npm/mathjax@4.1.3/tex-mml-chtml.js"
+
+# where whole npm packages have been downloaded from (see WHOLE_NPM_PACKAGES), so each is only downloaded once
+downloaded_npm_packages = set()
+
+
+def interactive_frames(page, page_url):
+    """yields (iframe, url of the page it shows) for the interactives in a parsed page or knowl"""
+    for frame in page.find_all("iframe", src=True):
+        src = urldefrag(frame["src"])[0]
+        parsed = urlparse(src)
+        if not parsed.scheme and not parsed.netloc and src.endswith(INTERACTIVE_PAGE_SUFFIX):
+            yield frame, urljoin(page_url, src)
+
+
+def point_interactives_at_dependency_zip(page, page_url, dep_file_reference):
+    """
+    Point the iframes of interactives at their pages in the dependency zip (see download_interactive_page). Keeping
+    them with the book's pages' zips keeps them on the same origin as the page, which Doenet's coordinator needs.
+    """
+    for frame, frame_url in interactive_frames(page, page_url):
+        fragment = urldefrag(frame["src"])[1]
+        frame["src"] = dep_file_reference + archive_path_for_url(frame_url) + ("#" + fragment if fragment else "")
+
+
+def download_npm_package_for_url(url, archive_dir):
+    """
+    If url is a file in one of the WHOLE_NPM_PACKAGES, download the whole package to where the page loads it from, e.g.
+    cdn.jsdelivr.net/npm/@doenet/standalone@0.7/ in the archive. It's downloaded as a single tarball from the npm
+    registry, rather than file by file from jsDelivr, as these packages have thousands of files.
+
+    Returns whether url is in one of the packages
+    """
+    for pattern, skip in WHOLE_NPM_PACKAGES:
+        match = pattern.match(url)
+        if match:
+            break
+    else:
+        return False
+    package_url = match.group(0)
+    if package_url in downloaded_npm_packages:
+        return True
+    downloaded_npm_packages.add(package_url)
+
+    package, version_spec = match.groups()
+    version, _ = list_npm_package(package, version_spec)
+    metadata = try_request("{}{}/{}".format(NPM_REGISTRY, package, version)) if version else None
+    tarball = try_request(metadata.json()["dist"]["tarball"]) if metadata is not None and metadata.ok else None
+    if tarball is None or not tarball.ok:
+        LOGGER.warning("Could not download {}@{} from npm, pages using it won't work".format(package, version_spec))
+        return True
+    LOGGER.info("Downloading {}@{} for {}".format(package, version, url))
+
+    package_dir = os.path.normpath(os.path.join(archive_dir, archive_path_for_url(package_url)))
+    with tarfile.open(fileobj=io.BytesIO(tarball.content), mode="r:gz") as archive:
+        for member in archive.getmembers():
+            # every file in an npm package's tarball is in a top level folder, usually package/
+            path = member.name.split("/", 1)[1] if "/" in member.name else ""
+            if not member.isfile() or not path or skip.search(path):
+                continue
+            dest = os.path.normpath(os.path.join(package_dir, path))
+            if not dest.startswith(package_dir + os.sep):
+                continue
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            with open(dest, "wb") as f:
+                f.write(archive.extractfile(member).read())
+    return True
+
+
+def download_interactive_page(frame_url, archive_dir):
+    """
+    Save the page an interactive's iframe shows in the dependency zip, at the same place as the other resources from
+    the book, with the resources it loads, e.g. the DoenetML viewer from jsDelivr, downloaded into the dependency zip
+    too and linked relative to the page.
+    """
+    response = try_request(frame_url)
+    if response is None or response.status_code != 200:
+        return
+    frame = parse_html(response.content)
+    frame_path = archive_path_for_url(frame_url)
+
+    def relative_to_frame(url):
+        return posixpath.relpath(archive_path_for_url(url), posixpath.dirname(frame_path))
+
+    has_mathjax = False
+    for tag, attr in PAGE_RESOURCE_ATTRS.items():
+        for node in frame.find_all(tag, attrs={attr: True}):
+            resource_url = urljoin(frame_url, node[attr])
+            # links that aren't stylesheets are things like preconnect hints
+            if urlparse(resource_url).scheme not in ("http", "https") or "stylesheet" not in node.get("rel", ["stylesheet"]):
+                continue
+            mathjax = node.name == "script" and frame_mathjax(resource_url, frame, frame_url, archive_dir)
+            if mathjax:
+                has_mathjax = True
+                node[attr] = relative_to_frame(mathjax["url"])
+                if mathjax["fonts_url"]:
+                    set_mathjax_fonts_path(frame, node, relative_to_frame(mathjax["fonts_url"]))
+                continue
+            if not download_npm_package_for_url(resource_url, archive_dir):
+                content = download_to_archive(resource_url, archive_dir)
+                if content is None:
+                    continue
+                if urldefrag(resource_url)[0].split("?")[0].endswith(".css"):
+                    download_css_resources(resource_url, content.decode("utf-8", errors="replace"), archive_dir)
+            node[attr] = relative_to_frame(resource_url)
+
+    # imports relative to the page stay as they are, as the page is saved at the same place relative to the book's
+    # other files in the dependency zip
+    download_page_module_imports(frame, frame_url, archive_dir)
+
+    if frame.find(class_="doenetml-applet") and not has_mathjax:
+        add_mathjax_for_doenet(frame, frame_url, archive_dir, relative_to_frame)
+
+    dest = os.path.join(archive_dir, frame_path)
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    with open(dest, "wb") as f:
+        f.write(str(frame).encode("utf-8"))
+
+
+def frame_mathjax(script_url, frame, frame_url, archive_dir):
+    """
+    If the script is MathJax, download it into the dependency zip (see download_mathjax), returns its entry in
+    mathjax_scripts, or None if it isn't MathJax. Interactive pages tend to load the same MathJax as each other and the
+    book's pages, so it's only identified and downloaded once.
+    """
+    known = next((info for info in mathjax_scripts.values() if info["url"] == script_url), None)
+    if known or not download_mathjax(script_url, frame, frame_url, archive_dir):
+        return known
+    return next(info for info in mathjax_scripts.values() if info["url"] == script_url)
+
+
+def add_mathjax_for_doenet(frame, frame_url, archive_dir, relative_to_frame):
+    """
+    The DoenetML viewer loads MathJax 4 from jsDelivr, unless the page it's in already loads MathJax 3 or 4, in which
+    case it uses that, adding its own macros and TeX packages. So for an activity page that doesn't load MathJax, load
+    the MathJax the book's pages use from the dependency zip, or the one the viewer would load if the book's pages
+    don't use one it can.
+    """
+    info = next((info for info in mathjax_scripts.values() if info["major_version"] >= 3), None)
+    if info is None:
+        info = frame_mathjax(DOENET_DEFAULT_MATHJAX_URL, frame, frame_url, archive_dir)
+    if info is None:
+        LOGGER.warning("No MathJax for the DoenetML activity {}, its math may not render".format(frame_url))
+        return
+    head = frame.head or frame
+    script = frame.new_tag("script", attrs={"defer": "", "src": relative_to_frame(info["url"])})
+    head.insert(0, script)
+    if info["fonts_url"]:
+        set_mathjax_fonts_path(frame, script, relative_to_frame(info["fonts_url"]))
+
+
+# Relative imports in modules, e.g. the inline module script in PreTeXt pages that configures MathJax,
+#   import { startMathJax } from './_static/pretext/js/dist/mathjax_startup.js';
+# capturing what comes before the specifier, its quote, and the specifier
+MODULE_IMPORT_RE = re.compile(r"""(\bfrom\s*|\bimport\s*\(?\s*)(["'])(\.{1,2}/[^"'\s]+)\2""")
+# modules downloaded by download_module_imports, so each is only downloaded and scanned once
+downloaded_modules = set()
+
+
+def download_module_imports(module_text, module_url, archive_dir):
+    """Download the modules a module imports with relative specifiers, and the ones they import, into archive_dir"""
+    for _, _, specifier in MODULE_IMPORT_RE.findall(module_text):
+        import_url = urldefrag(urljoin(module_url, specifier))[0]
+        if import_url in downloaded_modules:
+            continue
+        downloaded_modules.add(import_url)
+        content = download_to_archive(import_url, archive_dir)
+        if content is not None:
+            download_module_imports(content.decode("utf-8", errors="replace"), import_url, archive_dir)
+
+
+def download_page_module_imports(page, page_url, archive_dir):
+    """download_module_imports for the inline module scripts in a parsed page"""
+    for script in page.find_all("script", src=False, type="module"):
+        download_module_imports(script.get_text(), page_url, archive_dir)
+
+
+def point_module_imports_at_dependency_zip(page, page_url, dep_file_reference):
+    """Point relative imports in a page's inline module scripts at the modules in the dependency zip"""
+    for script in page.find_all("script", src=False, type="module"):
+        script.string = MODULE_IMPORT_RE.sub(
+            lambda m: m.group(1) + m.group(2) + dep_file_reference
+            + archive_path_for_url(urljoin(page_url, m.group(3))) + m.group(2),
+            script.get_text())
 
 
 def process_wikipedia_page(content, baseurl, destpath, **kwargs):
