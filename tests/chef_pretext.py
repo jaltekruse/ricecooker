@@ -334,8 +334,9 @@ def download_book_page(url, thumbnail, title, sub_chap_number):
         #print("JASON DEBUG - #$%@#!$^#$%^^@#$%&^#$%%@$#%@#%$#@%@#$%@#$%@#$%@#$%@#$%@#$%@#$%#&&^(*(")
         #print(dep_zip_file.preset)
 
-        # relative to the page's own zip, e.g. /zipcontent/<page>.zip/index.html, so it works wherever Kolibri serves
-        # zips from, like the /content/zipcontent/ of a separate content server
+        # Relative, as Kolibri serves a node's archives side by side, under its own
+        # zipcontent/ path (content/zipcontent/ on Kolibri's zip content origin), and each
+        # page's index.html is at the root of its zip
         dep_file_reference = '../{}.zip/'.format(dep_zip_file.checksum)
 
         for link in local_links:
@@ -387,6 +388,9 @@ def download_book_page(url, thumbnail, title, sub_chap_number):
                                 license=license,
                                 copyright_holder=copyright,
                                 license_description=license_description,
+                                # Kolibri plays a video from YouTube by the id in its options;
+                                # Studio publishes options, but not source_id
+                                extra_fields={"options": {"youtube_id": video_id}},
                                 files=[wvf])
                 extra_content.append(node)
                 # if we are on the second pass and have nodeIDs from uploading the first time
