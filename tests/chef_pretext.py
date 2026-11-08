@@ -80,7 +80,10 @@ license_description=""
 BOOK_PORT = 8081
 CHANNEL_LANGUAGE = "en"  # language of channel
 # DOMAIN = f"https://activecalculus.org/single2e/"
-DOMAIN = "https://runestone.academy/ns/books/published/ac-single-d/"
+# Runestone puts its books behind a Cloudflare challenge, which turns scripts away
+# DOMAIN = "https://runestone.academy/ns/books/published/ac-single-d/"
+# the same version of the book, with DoenetML activities, hosted on GitHub Pages
+DOMAIN = "https://mattboelkins.github.io/active-calculus-single-mbx/doenet/"
 BOOK_BASE_URL = DOMAIN
 # directory the book's html pages are served from, this can point at a book hosted online like
 # "https://runestone.academy/ns/books/published/thinkcspy/", it must end with a /
@@ -446,6 +449,7 @@ def download_book_page(url, thumbnail, title, sub_chap_number):
     new_html = new_html.replace("\"_static", "\"" + dep_file_reference + archive_path_for_url(urljoin(url, "_static")))
 
     new_html = replace_links_to_other_pages(new_html)
+    new_html = fill_runestone_templates(new_html)
 
 
     # other URLs above
@@ -606,18 +610,19 @@ def archive_path_for_url(url):
     return parsed.netloc + parsed.path
 
 
-def download_to_archive(url, archive_dir, source_urls=None):
+def download_to_archive(url, archive_dir, source_urls=None, archive_path=None):
     """
     Download a single resource into archive_dir at the same location archive_page would put it, returns the content
     of the resource, or None if it couldn't be downloaded
 
     source_urls are the places to try downloading the content from, in order, when it should come from somewhere
-    other than url itself, the location the page will request it from
+    other than url itself, the location the page will request it from. archive_path is where to save it in
+    archive_dir, when that isn't archive_path_for_url(url)
     """
     url = urldefrag(url)[0]
     if urlparse(url).scheme not in ("http", "https"):
         return None
-    dest = os.path.join(archive_dir, archive_path_for_url(url))
+    dest = os.path.join(archive_dir, archive_path or archive_path_for_url(url))
     if os.path.isfile(dest):
         with open(dest, "rb") as existing:
             return existing.read()
@@ -741,6 +746,37 @@ def rewrite_knowl_for_page(knowl_html, page_url, dep_file_reference):
             node[attr] = dep_file_reference + archive_path_for_url(resource_url)
     point_interactives_at_dependency_zip(knowl, page_url, dep_file_reference)
     return replace_links_to_other_pages(str(knowl))
+
+
+# Placeholders in books built for Runestone that Runestone's server fills in when it serves them, so they are still in
+# copies of the book hosted elsewhere, e.g. GitHub Pages, as in
+#   eBookConfig.isLoggedIn = ~._ is_logged_in|default('false') _.~;
+# capturing the filters after the variable's name, like |default('false')
+RUNESTONE_TEMPLATE_RE = re.compile(r"~\._\s*[\w.]+((?:\|[^~]*?)?)\s*_\.~")
+RUNESTONE_TEMPLATE_DEFAULT_RE = re.compile(r"\|\s*default\((.*?)\)\s*(?=\||$)")
+
+
+def fill_runestone_templates(html):
+    """
+    Fill in Runestone's placeholders with their defaults, or nothing, as Runestone would for a reader who isn't
+    signed in. Left in, they are syntax errors in the script that sets up eBookConfig, which Runestone's components
+    need. The components are also told not to use Runestone's server, as there is none in Kolibri.
+    """
+    if not RUNESTONE_TEMPLATE_RE.search(html):
+        return html
+
+    def default_value(match):
+        default = RUNESTONE_TEMPLATE_DEFAULT_RE.search(match.group(1))
+        if not default:
+            return ""
+        value = default.group(1).strip()
+        # the template prints a default of 'false' as false
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
+            return value[1:-1]
+        return value
+
+    html = RUNESTONE_TEMPLATE_RE.sub(default_value, html)
+    return html.replace("eBookConfig.useRunestoneServices = true", "eBookConfig.useRunestoneServices = false")
 
 
 def replace_links_to_other_pages(html):
@@ -1084,13 +1120,20 @@ def download_interactive_page(frame_url, archive_dir):
                 if mathjax["fonts_url"]:
                     set_mathjax_fonts_path(frame, node, relative_to_frame(mathjax["fonts_url"]))
                 continue
-            if not download_npm_package_for_url(resource_url, archive_dir):
-                content = download_to_archive(resource_url, archive_dir)
+            if download_npm_package_for_url(resource_url, archive_dir):
+                node[attr] = relative_to_frame(resource_url)
+                continue
+            # named the way archive_page names what pages load, so a resource the book's pages load too is shared,
+            # e.g. https://fonts.googleapis.com/css2?family=... is fonts.googleapis.com/css2_family_.../index.css,
+            # where a name without an extension would be served with a type browsers won't use as a stylesheet
+            archive_path = downloader.get_archive_filename(resource_url, archive_dir, frame_url, archive_dir)
+            if not os.path.isfile(os.path.join(archive_dir, archive_path)):
+                content = download_to_archive(resource_url, archive_dir, archive_path=archive_path)
                 if content is None:
                     continue
-                if urldefrag(resource_url)[0].split("?")[0].endswith(".css"):
-                    download_css_resources(resource_url, content.decode("utf-8", errors="replace"), archive_dir)
-            node[attr] = relative_to_frame(resource_url)
+                if node.name == "link":
+                    save_stylesheet_with_local_urls(resource_url, archive_path, content, archive_dir)
+            node[attr] = posixpath.relpath(archive_path, posixpath.dirname(frame_path))
 
     # imports relative to the page stay as they are, as the page is saved at the same place relative to the book's
     # other files in the dependency zip
@@ -1103,6 +1146,25 @@ def download_interactive_page(frame_url, archive_dir):
     os.makedirs(os.path.dirname(dest), exist_ok=True)
     with open(dest, "wb") as f:
         f.write(str(frame).encode("utf-8"))
+
+
+def save_stylesheet_with_local_urls(css_url, archive_path, content, archive_dir):
+    """
+    Download what a stylesheet saved at archive_path loads, like fonts, and point it at them, as they can come from
+    other hosts, e.g. Google Fonts' stylesheets load the fonts from fonts.gstatic.com
+    """
+    css = content.decode("utf-8", errors="replace")
+    download_css_resources(css_url, css, archive_dir)
+
+    def local_url(match):
+        ref = match.group(1)
+        if ref.startswith("data:"):
+            return match.group(0)
+        ref_path = archive_path_for_url(urljoin(css_url, ref).split("?")[0])
+        return 'url("{}")'.format(posixpath.relpath(ref_path, posixpath.dirname(archive_path)))
+
+    with open(os.path.join(archive_dir, archive_path), "w", encoding="utf-8") as f:
+        f.write(CSS_URL_RE.sub(local_url, css))
 
 
 def frame_mathjax(script_url, frame, frame_url, archive_dir):
