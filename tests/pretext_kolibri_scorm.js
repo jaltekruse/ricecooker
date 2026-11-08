@@ -345,24 +345,75 @@
       return;
     }
     var getSavedState = function (location) {
-      var store = storage();
-      var saved = store ? store.getItem(SPLICE_STATE_KEY + location) : null;
-      if (saved === null) {
-        return Promise.resolve(null);
-      }
-      try {
-        return Promise.resolve({ detail: { answer: JSON.parse(saved) } });
-      } catch (e) {
-        return Promise.resolve(null);
-      }
+      var saved = savedSpliceState(location);
+      return Promise.resolve(saved === undefined ? null : { detail: { answer: saved } });
     };
     getSavedState.__kolibri = true;
     wrapper.getSavedState = getSavedState;
   }
 
+  function savedSpliceState(location) {
+    var store = storage();
+    var saved = store ? store.getItem(SPLICE_STATE_KEY + location) : null;
+    try {
+      return saved === null ? undefined : JSON.parse(saved);
+    } catch (e) {
+      return undefined;
+    }
+  }
+
+  // The activity a SPLICE message is from: the component its iframe is in, as Runestone's SpliceWrapper finds it
+  function spliceActivity(event) {
+    var frames = document.getElementsByTagName("iframe");
+    for (var i = 0; i < frames.length; i++) {
+      if (frames[i].contentWindow === event.source) {
+        var component = frames[i].closest("[data-component]");
+        return component ? component.id : event.data.activity_id || frames[i].src;
+      }
+    }
+    return event.data.activity_id || null;
+  }
+
+  // Books whose Runestone has no SpliceWrapper still have DoenetML activities report their scores, and ask for their
+  // work, with SPLICE, so do what SpliceWrapper would
+  function listenToSplice() {
+    if (window.spliceWrapper) {
+      return;
+    }
+    window.addEventListener("message", function (event) {
+      var data = event.data;
+      if (!data || typeof data !== "object" || typeof data.subject !== "string") {
+        return;
+      }
+      var location = data.subject.indexOf("SPLICE.") === 0 ? spliceActivity(event) : null;
+      if (!location) {
+        return;
+      }
+      if (data.subject === "SPLICE.reportScoreAndState") {
+        onBookEvent(null, {
+          event: data.subject,
+          div_id: location,
+          percent: data.score,
+          correct: data.score === 1,
+          answer: JSON.stringify(data.state),
+        });
+      } else if (data.subject === "SPLICE.getState") {
+        event.source.postMessage(
+          {
+            message_id: data.message_id,
+            subject: "SPLICE.getState.response",
+            state: savedSpliceState(location),
+          },
+          "*",
+        );
+      }
+    });
+  }
+
   function start() {
     hookRunestone();
     hookSplice();
+    listenToSplice();
     restoreCode();
     api = findApi();
     gradedIds = findGradedComponents();

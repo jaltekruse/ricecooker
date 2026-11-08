@@ -1076,6 +1076,8 @@ DOENET_DEFAULT_MATHJAX_URL = "https://cdn.jsdelivr.net/npm/mathjax@4.1.3/tex-mml
 
 # where whole npm packages have been downloaded from (see WHOLE_NPM_PACKAGES), so each is only downloaded once
 downloaded_npm_packages = set()
+# the pages of interactives that are DoenetML activities, found by download_interactive_page
+doenet_frame_urls = set()
 
 
 def interactive_frames(page, page_url):
@@ -1095,6 +1097,19 @@ def point_interactives_at_dependency_zip(page, page_url, dep_file_reference):
     for frame, frame_url in interactive_frames(page, page_url):
         fragment = urldefrag(frame["src"])[1]
         frame["src"] = dep_file_reference + archive_path_for_url(frame_url) + ("#" + fragment if fragment else "")
+        if frame_url in doenet_frame_urls and not frame.find_parent(attrs={"data-component": "doenet"}):
+            wrap_doenet_frame(page, frame, frame_url)
+
+
+def wrap_doenet_frame(page, frame, frame_url):
+    """
+    Put a DoenetML activity's iframe in the element PreTeXt puts it in when it builds a book for Runestone, or SCORM,
+    but not for the web, <div data-component="doenet" id="...">. Runestone's SpliceWrapper gives the activity's score
+    to the component the iframe is in, which is the exercise when the activity is in one, and pretext_kolibri_scorm.js
+    finds the activities to grade by it.
+    """
+    name = frame.get("id") or posixpath.basename(urlparse(frame_url).path)[: -len(INTERACTIVE_PAGE_SUFFIX)]
+    frame.wrap(page.new_tag("div", attrs={"data-component": "doenet", "id": "{}-doenet".format(name)}))
 
 
 def download_npm_package_for_url(url, archive_dir):
@@ -1189,7 +1204,14 @@ def download_interactive_page(frame_url, archive_dir):
     # other files in the dependency zip
     download_page_module_imports(frame, frame_url, archive_dir)
 
-    if frame.find(class_="doenetml-applet") and not has_mathjax:
+    applet = frame.find(class_="doenetml-applet")
+    if applet:
+        doenet_frame_urls.add(frame_url)
+        # PreTeXt only has activities report their scores to the page they are in with the SPLICE protocol in books
+        # built for Runestone or SCORM, as there was nothing to report them to on the web
+        if not applet.has_attr("data-doenet-message-parent"):
+            applet["data-doenet-message-parent"] = "true"
+    if applet and not has_mathjax:
         add_mathjax_for_doenet(frame, frame_url, archive_dir, relative_to_frame)
 
     dest = os.path.join(archive_dir, frame_path)
