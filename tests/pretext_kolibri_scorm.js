@@ -10,8 +10,10 @@
  *
  * Kolibri gives HTML5 apps a SCORM 1.2 API, on the app's window in newer versions of Kolibri and on its parent in
  * older ones, and makes the learner's progress on the app the SCORM score, (raw - min) / (max - min). Kolibri also
- * keeps the app's SCORM data and localStorage for each learner, which is where scores and DoenetML activities' work
- * are kept between visits. Runestone's components keep their own answers in localStorage.
+ * keeps the app's SCORM data and localStorage for each learner, on its server with the learner's progress, which
+ * syncs between devices. Scores are kept in the SCORM data, whose cmi.suspend_data is limited to 4096 characters,
+ * and DoenetML activities' work and activecodes' programs, which can be much bigger, in localStorage. Runestone's
+ * components keep their own answers in localStorage.
  *
  * PreTeXt's SCORM builds do much the same with js/ptx_scorm_events.js, made for LMSs that show a whole book as one
  * SCORM package, this is made for a Kolibri resource for each page.
@@ -57,8 +59,12 @@
     matching: "matching",
     unittest: "performance",
   };
-  // where DoenetML activities' work is kept, in localStorage, which Kolibri keeps for each learner
+  // where DoenetML activities' work and activecodes' programs are kept, in localStorage, which Kolibri keeps for each
+  // learner, on its server with the learner's progress, so they follow the learner to other devices
   var SPLICE_STATE_KEY = "kolibri-pretext:splice-state:";
+  var CODE_KEY = "kolibri-pretext:code:";
+  // how long to keep trying to put programs back in activecodes, which Runestone makes after the page loads
+  var RESTORE_CODE_FOR_MS = 30000;
   // SCORM 1.2 limits cmi.suspend_data to 4096 characters
   var SUSPEND_DATA_LIMIT = 4096;
 
@@ -196,7 +202,7 @@
       var id = gradedIds[i];
       if (typeof scores[id] === "number") {
         total += scores[id];
-        kept[id] = Math.round(scores[id] * 1000) / 1000;
+        kept[id] = Math.round(scores[id] * 10000) / 10000;
       }
     }
     var suspendData = JSON.stringify({ scores: kept });
@@ -260,24 +266,75 @@
     reportScore();
   }
 
-  function hookRunestone() {
-    var base = window.RunestoneBase;
-    if (!base || !base.prototype || base.prototype.logBookEvent.__kolibri) {
+  // Runestone only keeps an activecode's program on its server, keep it in localStorage when the learner runs it
+  function onRunEvent(component, eventInfo) {
+    var store = storage();
+    var editor = component && component.editor;
+    var id = (eventInfo && eventInfo.div_id) || (component && component.divid);
+    if (store && id && editor && typeof editor.getValue === "function") {
+      try {
+        store.setItem(CODE_KEY + id, editor.getValue());
+      } catch (e) {
+        // too big to keep
+      }
+    }
+  }
+
+  // Put the programs kept by onRunEvent back in their activecodes, once Runestone has made them
+  function restoreCode() {
+    var store = storage();
+    if (!store) {
       return;
     }
-    var logBookEvent = base.prototype.logBookEvent;
+    var pending = {};
+    for (var i = 0; i < store.length; i++) {
+      var key = store.key(i);
+      if (key && key.indexOf(CODE_KEY) === 0) {
+        pending[key.slice(CODE_KEY.length)] = store.getItem(key);
+      }
+    }
+    var started = Date.now();
+    (function restorePending() {
+      var map = window.componentMap || {};
+      for (var id in pending) {
+        var editor = map[id] && map[id].editor;
+        if (editor && typeof editor.setValue === "function") {
+          if (editor.getValue() !== pending[id]) {
+            editor.setValue(pending[id]);
+          }
+          delete pending[id];
+        }
+      }
+      if (Object.keys(pending).length && Date.now() - started < RESTORE_CODE_FOR_MS) {
+        setTimeout(restorePending, 500);
+      }
+    })();
+  }
+
+  // Wrap a RunestoneBase method to also hand what it's given to onEvent, after it has run
+  function hookMethod(name, onEvent) {
+    var base = window.RunestoneBase;
+    if (!base || !base.prototype || typeof base.prototype[name] !== "function" || base.prototype[name].__kolibri) {
+      return;
+    }
+    var method = base.prototype[name];
     var hooked = function (eventInfo) {
-      // logBookEvent fills in eventInfo, like its percent, before it does anything asynchronous
-      var result = logBookEvent.apply(this, arguments);
+      // the methods fill in eventInfo, like its percent, before they do anything asynchronous
+      var result = method.apply(this, arguments);
       try {
-        onBookEvent(this, eventInfo);
+        onEvent(this, eventInfo);
       } catch (e) {
-        console.error("Could not report an answer to Kolibri", e);
+        console.error("Could not keep a learner's work in Kolibri", e);
       }
       return result;
     };
     hooked.__kolibri = true;
-    base.prototype.logBookEvent = hooked;
+    base.prototype[name] = hooked;
+  }
+
+  function hookRunestone() {
+    hookMethod("logBookEvent", onBookEvent);
+    hookMethod("logRunEvent", onRunEvent);
   }
 
   // Runestone's SpliceWrapper asks the Runestone server for a DoenetML activity's saved work, answer from what this
@@ -306,6 +363,7 @@
   function start() {
     hookRunestone();
     hookSplice();
+    restoreCode();
     api = findApi();
     gradedIds = findGradedComponents();
     if (!api || !gradedIds.length) {
