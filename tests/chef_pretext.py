@@ -46,21 +46,28 @@ from le_utils.constants.labels import subjects
 
 
 # CHANNEL SETTINGS
-SOURCE_DOMAIN = "https://activecalculus.org/single2e/frontmatter.html"
-# SOURCE_ID = "thinkcspi_runestone_academy"  # an alphanumeric ID refering to this channel
+# SOURCE_DOMAIN = "https://runestone.academy/ns/books/published/FOPP-PIE/ThinkLikeComputer.html"
+# SOURCE_ID = "thinkcspy_runestone_academy"  # an alphanumeric ID refering to this channel
 # CHANNEL_TITLE = "How to Think Like a Computer Scientist, Interactive Edition"  # a humand-readbale title
-#SOURCE_ID = "thinkcspy_runestone_academy"  # an alphanumeric ID refering to this channel
+# CHANNEL_THUMBNAIL = "https://python.camden.rutgers.edu/python_resources/python3_book/_images/gasp_lessons.png"
+# copyright = "Brad Miller, Paul Resnick, Lauren Murphy, Jeffrey Elkner, Peter Wentworth, Allen B. Downey, Chris Meyers, and Dario Mitchell."
+# license = get_license(licenses.SPECIAL_PERMISSIONS,
+#                     description="GNU Free Documentation License - Version 1.3",
+#                     copyright_holder=copyright)
+# license_description="GNU Free Documentation License - Version 1.3"
+# DOMAIN = f"http://localhost:{BOOK_PORT}/"
+# BOOK_BASE_URL = DOMAIN
+# TOC_PAGE = "thinkcspy-3.html"
+
+# SOURCE_DOMAIN = "https://activecalculus.org/single2e/frontmatter.html"
+SOURCE_DOMAIN = "https://activecalculus.org/2026/08/08/acs2e-additional-version-with-new-and-improved-previews-and-exercises/"
 SOURCE_ID = "active_calculus_boelkins"  # an alphanumeric ID refering to this channel
 # a human-readable title, None uses the book's title and subtitle from the header of its pages, e.g. "Active Calculus: 2nd Ed"
 CHANNEL_TITLE = None
 # the channel's image when the book's header doesn't have a logo, the logo is used when it does
-CHANNEL_THUMBNAIL = "https://python.camden.rutgers.edu/python_resources/python3_book/_images/gasp_lessons.png"
+CHANNEL_THUMBNAIL = None
 
 copyright = "2012-2025 Matthew Boelkins"
-# license = licenses.get_license(licenses.SPECIAL_PERMISSIONS,
-#                     description="GNU Free Documentation License - Version 1.3",
-#                     copyright_holder=copyright)
-# license_description="GNU Free Documentation License - Version 1.3"
 license = get_license(licenses.CC_BY_SA, copyright_holder=copyright)
 license_description=""
 
@@ -70,14 +77,18 @@ license_description=""
 
 #SOURCE_ID = "jason_pretext_test_new_id"  # an alphanumeric ID refering to this channel
 #CHANNEL_TITLE = "Jason PreteXt testing"
-BOOK_PORT = 8080
+BOOK_PORT = 8081
 CHANNEL_LANGUAGE = "en"  # language of channel
-DOMAIN = f"https://activecalculus.org/single2e/"
+# DOMAIN = f"https://activecalculus.org/single2e/"
+DOMAIN = "https://runestone.academy/ns/books/published/ac-single-d/"
+BOOK_BASE_URL = DOMAIN
 # directory the book's html pages are served from, this can point at a book hosted online like
 # "https://runestone.academy/ns/books/published/thinkcspy/", it must end with a /
-BOOK_BASE_URL = DOMAIN
 # page in the book with the full table of contents
 TOC_PAGE = "frontmatter.html"
+# first two books had different auto-redirect pages from book root, hoping just requesting the domain/folder itself
+# will work for both as well as most future pretext books, TODO debug later, first test failed
+# TOC_PAGE = ""
 # only import sub-chapters whose number contains this string, set to None to import the whole book
 SUBCHAPTER_FILTER = "1."
 CHAPTER_FILTER = None
