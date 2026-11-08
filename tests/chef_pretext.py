@@ -35,7 +35,7 @@ from ricecooker.utils.html import download_file
 from ricecooker.utils import downloader, web
 
 from ricecooker.utils.zip import create_predictable_zip
-from le_utils.constants import file_formats, format_presets, licenses
+from le_utils.constants import completion_criteria, file_formats, format_presets, licenses
 
 from le_utils.constants.labels import accessibility_categories
 from le_utils.constants.labels import learning_activities
@@ -335,7 +335,7 @@ def download_book_page(url, thumbnail, title, sub_chap_number):
     pie_ref = '../../PIE/'
 
     def replace_links(soup):
-        nonlocal dep_zip_file, dep_file_reference
+        nonlocal dep_zip_file, dep_file_reference, graded
 
         parser = web.HTMLParser(index_path)
 
@@ -429,10 +429,13 @@ def download_book_page(url, thumbnail, title, sub_chap_number):
         point_mathjax_at_dependency_zip(soup, dep_file_reference)
         point_interactives_at_dependency_zip(soup, url, dep_file_reference)
         point_module_imports_at_dependency_zip(soup, url, dep_file_reference)
+        graded = add_kolibri_scorm_script(soup, dep_file_reference)
 
         return parser.replace_links_in_parsed(links_to_replace, soup, index_path)
 
     knowls = {}
+    # whether the page has exercises whose answers are reported to Kolibri (see add_kolibri_scorm_script)
+    graded = False
     archive_page(url, destpath, skip_static_asset_download=True, final_link_replacement=replace_links)
     #archive_page(url, destpath)
 
@@ -498,7 +501,11 @@ def download_book_page(url, thumbnail, title, sub_chap_number):
         # TODO JASON - seems like this assertion needs updating, it complains even if I have this, need to put it in the license itself below
         license=license,
         copyright_holder=copyright,
-        license_description=license_description
+        license_description=license_description,
+        # a page with exercises is complete when they've all been answered correctly, which the page reports to
+        # Kolibri itself, rather than after a while spent on it
+        extra_fields={"options": {"completion_criteria": {"model": completion_criteria.DETERMINED_BY_RESOURCE}}}
+        if graded else {},
     )
 
     # return a tuple, first element is the main section ot add, the second element of the tuple is another tuple with
@@ -554,6 +561,9 @@ def download_depedency_zip_files(page_urls):
     # done after the pages, so they can use the copy of MathJax the pages load
     for frame_url in sorted(interactive_urls):
         download_interactive_page(frame_url, destpath)
+
+    os.makedirs(os.path.join(destpath, os.path.dirname(KOLIBRI_SCORM_SCRIPT)), exist_ok=True)
+    shutil.copy(KOLIBRI_SCORM_SCRIPT_SOURCE, os.path.join(destpath, KOLIBRI_SCORM_SCRIPT))
 
     placeholder = os.path.join(VIDEO_DIR, "video_placeholder.png")
     if os.path.exists(placeholder):
@@ -777,6 +787,46 @@ def fill_runestone_templates(html):
 
     html = RUNESTONE_TEMPLATE_RE.sub(default_value, html)
     return html.replace("eBookConfig.useRunestoneServices = true", "eBookConfig.useRunestoneServices = false")
+
+
+# Reports the learner's answers to a page's exercises to Kolibri, see the script
+KOLIBRI_SCORM_SCRIPT_SOURCE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pretext_kolibri_scorm.js")
+# where it is in the dependency zip
+KOLIBRI_SCORM_SCRIPT = "kolibri/pretext_kolibri_scorm.js"
+# Runestone components that grade answers, by data-component, as in GRADED_COMPONENTS in the script
+GRADED_COMPONENTS = ("multiplechoice", "fillintheblank", "parsons", "hparsons", "dragndrop", "clickablearea",
+                     "matching", "doenet", "splice")
+
+
+def has_graded_exercises(page):
+    """Whether a parsed page has exercises the script reports answers to, as in findGradedComponents in the script"""
+    for node in page.find_all(attrs={"data-component": True}):
+        if node.find_parent(attrs={"data-optional": True}) or node.has_attr("data-optional"):
+            continue
+        if node["data-component"] in GRADED_COMPONENTS:
+            return True
+        if node["data-component"] == "activecode":
+            code = node.find("textarea")
+            if code and "unittest" in code.get_text():
+                return True
+    return False
+
+
+def add_kolibri_scorm_script(page, dep_file_reference):
+    """
+    Load the script that reports the learner's answers to a parsed page's exercises to Kolibri, from the dependency
+    zip, returns whether the page has exercises it reports answers to
+    """
+    script = page.new_tag("script", attrs={"src": dep_file_reference + KOLIBRI_SCORM_SCRIPT})
+    # before Runestone's scripts, so it looks for exercises before Runestone turns them into its components, which
+    # takes activecodes' unit tests out of the page
+    head = page.head or page
+    charset = head.find("meta", attrs={"charset": True}) or head.find("meta", attrs={"http-equiv": True})
+    if charset:
+        charset.insert_after(script)
+    else:
+        head.insert(0, script)
+    return has_graded_exercises(page)
 
 
 def replace_links_to_other_pages(html):
