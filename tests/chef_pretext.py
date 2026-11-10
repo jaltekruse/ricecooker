@@ -15,6 +15,7 @@ from urllib.parse import urljoin
 from urllib.parse import urlparse
 
 import shutil
+import subprocess
 
 import le_utils
 import requests
@@ -96,6 +97,26 @@ TOC_PAGE = "frontmatter.html"
 SUBCHAPTER_FILTER = "1."
 CHAPTER_FILTER = None
 VIDEO_DIR = "/home/jason/scraping_sites/aYoutubeVidsForKolibri"
+
+# WEBWORK SETTINGS
+# Books' WeBWorK exercises are shown with a WeBWorK server when they're activated, which learners using Kolibri
+# offline can't reach, so they're made to work with WeBWorK's problem renderer running in the browser, compiled to
+# WebAssembly (https://github.com/jaltekruse/webwork-wasm), which goes in the dependency zip with the problems the book
+# uses (see build_webwork). Set to False to show only the exercises' static versions, as PreTeXt prints them.
+WEBWORK = True
+# a build of the engine (the dist/ build.sh makes), None to download the build from WEBWORK_ENGINE_REPO
+WEBWORK_ENGINE_DIR = None
+WEBWORK_ENGINE_REPO = "https://github.com/jaltekruse/webwork-wasm"
+WEBWORK_ENGINE_BRANCH = "gh-pages"
+# Where to find the problems a book uses, searched in order. Each is laid out like a WeBWorK course's templates
+# directory, or, with a prefix, the part of one under the prefix, and can be a local directory or a URL. Books use
+# problems from the Open Problem Library (Library/...), and can use problems of the course on the server they were
+# built with, which only that server has, e.g. Active Calculus's csafranski/... problems. Put a copy of those
+# courses' templates directories first, e.g. "/path/to/course/templates", to make those exercises work too.
+WEBWORK_TEMPLATES = [
+    {"prefix": "Library/", "location": "https://raw.githubusercontent.com/openwebwork/webwork-open-problem-library/main/OpenProblemLibrary/"},
+    {"prefix": "Contrib/", "location": "https://raw.githubusercontent.com/openwebwork/webwork-open-problem-library/main/Contrib/"},
+]
 
 
 sess = requests.Session()
@@ -373,12 +394,10 @@ def download_book_page(url, thumbnail, title, sub_chap_number):
 
         page = soup
 
-        # webwork excercises rely on an external server, disable the "activate" buttons
-        # that will just cause confusion, classes can still make use of the static versions
-        # of the questions that are rendered by default
-        all_webwork_buttons = page.find_all("button", class_="webwork-button")
-        for webwork_button in all_webwork_buttons:
-            webwork_button['style'] = "display:none"
+        # webwork exercises rely on an external server, make the ones the in-browser engine can show work with it,
+        # and hide the "activate" buttons of the others, leaving the static versions of the questions that are
+        # rendered by default
+        activate_webwork(page, dep_file_reference)
 
         all_videos = page.find_all("iframe", class_="video")
         if (all_videos):
@@ -527,6 +546,9 @@ def download_depedency_zip_files(page_urls):
 
     scanned_scripts = set()
     downloaded_resource_urls = set()
+    # the WeBWorK problems the pages use, by path, with a seed, and the PG of those written in the book
+    problems = {}
+    generated_dir = tempfile.mkdtemp()
     # the pages interactives are shown in, like DoenetML activities, which PreTeXt builds next to the book's pages
     interactive_urls = set()
     for url in page_urls:
@@ -539,6 +561,15 @@ def download_depedency_zip_files(page_urls):
             interactive_urls.update(frame_url for _, frame_url in interactive_frames(parse_html(knowl_html), url))
 
         interactive_urls.update(frame_url for _, frame_url in interactive_frames(page, url))
+
+        if WEBWORK:
+            find_webwork_problems(page, url, problems, generated_dir)
+            # pretext-webwork.js loads knowl.js, next to it, in the problems' iframes
+            for script in page.find_all("script", src=lambda src: src and src.endswith("pretext-webwork.js")):
+                download_to_archive(urljoin(urljoin(url, script["src"]), "knowl.js"), destpath)
+        # what pretext-webwork.js needs from a WeBWorK server's webwork2_files is put in the zip by build_webwork
+        for script in page.find_all("script", src=lambda src: src and is_webwork2_file(src)):
+            script.decompose()
 
         for script in page.find_all("script", src=True):
             script_url = urljoin(url, script["src"])
@@ -561,6 +592,8 @@ def download_depedency_zip_files(page_urls):
     # done after the pages, so they can use the copy of MathJax the pages load
     for frame_url in sorted(interactive_urls):
         download_interactive_page(frame_url, destpath)
+
+    build_webwork(problems, generated_dir, destpath)
 
     os.makedirs(os.path.join(destpath, os.path.dirname(KOLIBRI_SCORM_SCRIPT)), exist_ok=True)
     shutil.copy(KOLIBRI_SCORM_SCRIPT_SOURCE, os.path.join(destpath, KOLIBRI_SCORM_SCRIPT))
@@ -793,13 +826,192 @@ def fill_runestone_templates(html):
 KOLIBRI_SCORM_SCRIPT_SOURCE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pretext_kolibri_scorm.js")
 # where it is in the dependency zip
 KOLIBRI_SCORM_SCRIPT = "kolibri/pretext_kolibri_scorm.js"
+# where the WeBWorK engine goes in the dependency zip, with pretext_kolibri_webwork.js, which uses it
+WEBWORK_DIR = "webwork/"
+KOLIBRI_WEBWORK_SCRIPT_SOURCE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pretext_kolibri_webwork.js")
+WEBWORK_BUNDLE_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "webwork_bundle.js")
+# WeBWorK problems found while building the dependency zip, by sourceFilePath, whether the engine shows them without
+# errors, so only those exercises are made to work with it (see build_webwork)
+webwork_problems = {}
 # Runestone components that grade answers, by data-component, as in GRADED_COMPONENTS in the script
 GRADED_COMPONENTS = ("multiplechoice", "fillintheblank", "parsons", "hparsons", "dragndrop", "clickablearea",
                      "matching", "doenet", "splice")
 
 
+# PreTeXt's WeBWorK exercises are elements with data-origin, "webwork2" for problems on the server
+# (data-sourcefilepath), "generated" for problems written in the book, whose PG is published with the book, at
+# generated/webwork/pg/<data-problemsource>. BeautifulSoup's html parser lowercases attribute names.
+WEBWORK_ORIGINS = ("webwork2", "generated")
+# where problems written in the book go in the templates directory of the engine
+WEBWORK_GENERATED_DIR = "pretext-generated/"
+# The files pretext-webwork.js loads from the server's webwork2_files, from npm, by where they go there. The engine
+# has its own copies of MathJax and Bootstrap, which are moved there (see build_webwork).
+WEBWORK2_FILES = {
+    "webwork2_files/node_modules/jquery/dist/jquery.min.js": "jquery@3.7.1/dist/jquery.min.js",
+    "webwork2_files/node_modules/iframe-resizer/js/iframeResizer.min.js": "iframe-resizer@4.4.5/js/iframeResizer.min.js",
+    "webwork2_files/node_modules/iframe-resizer/js/iframeResizer.contentWindow.min.js":
+        "iframe-resizer@4.4.5/js/iframeResizer.contentWindow.min.js",
+}
+# the engine's files the demo site has, which a book doesn't need
+WEBWORK_ENGINE_LEFT_OUT = ("index.html", "app.js", "app.css", "sw.js", "manifest.webmanifest", "precache-manifest.json",
+                           "problems", "opl", ".nojekyll", ".git", "pg-wasm-config.json")
+
+
+def webwork_exercises(page):
+    """A parsed page's WeBWorK exercises, the elements pretext-webwork.js's handleWW activates"""
+    return [node for node in page.find_all(attrs={"data-origin": True})
+            if node["data-origin"] in WEBWORK_ORIGINS and node.get("id")]
+
+
+def webwork_problem_path(exercise):
+    """The problem's path in the engine's templates directory"""
+    if exercise["data-origin"] == "generated":
+        return WEBWORK_GENERATED_DIR + exercise.get("data-problemsource", "")
+    return exercise.get("data-sourcefilepath", "")
+
+
+def webwork_seed(exercise):
+    try:
+        return int(exercise.get("data-seed", 1))
+    except ValueError:
+        return 1
+
+
+def find_webwork_problems(page, page_url, problems, generated_dir):
+    """
+    Add the WeBWorK problems a parsed page uses to problems, a dict of path to seed, and download the PG of the ones
+    written in the book to generated_dir
+    """
+    for exercise in webwork_exercises(page):
+        path = webwork_problem_path(exercise)
+        if not path or path == WEBWORK_GENERATED_DIR:
+            continue
+        problems.setdefault(path, webwork_seed(exercise))
+        if exercise["data-origin"] == "generated":
+            source = exercise["data-problemsource"]
+            dest = os.path.join(generated_dir, source)
+            if not os.path.exists(dest):
+                try:
+                    response = make_request(urljoin(page_url, "generated/webwork/pg/" + source))
+                except requests.RequestException as e:
+                    LOGGER.warning("Could not download WeBWorK problem {}: {}".format(source, e))
+                    continue
+                if response.status_code == 200:
+                    os.makedirs(os.path.dirname(dest), exist_ok=True)
+                    with open(dest, "wb") as f:
+                        f.write(response.content)
+
+
+def is_webwork2_file(url):
+    return "/webwork2_files/" in url
+
+
+def get_webwork_engine():
+    """The directory of a build of the WeBWorK engine, downloaded from WEBWORK_ENGINE_REPO if needed"""
+    if WEBWORK_ENGINE_DIR:
+        return WEBWORK_ENGINE_DIR
+    engine_dir = os.path.join(tempfile.gettempdir(), "ricecooker-webwork-engine")
+    if not os.path.isfile(os.path.join(engine_dir, "pg-engine.js")):
+        shutil.rmtree(engine_dir, ignore_errors=True)
+        subprocess.run(["git", "clone", "--quiet", "--depth", "1", "--branch", WEBWORK_ENGINE_BRANCH,
+                        WEBWORK_ENGINE_REPO, engine_dir], check=True)
+    return engine_dir
+
+
+def build_webwork(problems, generated_dir, archive_dir):
+    """
+    Put the WeBWorK engine in the dependency zip being built in archive_dir, at WEBWORK_DIR, with the problems a book
+    uses (a dict of path to seed), and the files they need, which webwork_bundle.js finds by rendering each problem with
+    the engine in node, and the files pretext-webwork.js loads from a WeBWorK server's webwork2_files
+    """
+    webwork_problems.clear()
+    if not problems:
+        return
+    engine_dir = get_webwork_engine()
+    dest = os.path.join(archive_dir, WEBWORK_DIR)
+    shutil.copytree(engine_dir, dest, ignore=lambda folder, names: [
+        name for name in names if folder == engine_dir and name in WEBWORK_ENGINE_LEFT_OUT])
+    # the MathJax and Bootstrap the engine's pages use, where pretext-webwork.js loads them from
+    node_modules = os.path.join(dest, "webwork2_files", "node_modules")
+    os.makedirs(os.path.join(node_modules, "mathjax"), exist_ok=True)
+    shutil.move(os.path.join(dest, "vendor", "mathjax"), os.path.join(node_modules, "mathjax", "es5"))
+    for name, kind in (("bootstrap.min.css", "css"), ("bootstrap.bundle.min.js", "js")):
+        os.makedirs(os.path.join(node_modules, "bootstrap", "dist", kind), exist_ok=True)
+        shutil.move(os.path.join(dest, "vendor", "bootstrap", name),
+                    os.path.join(node_modules, "bootstrap", "dist", kind, name))
+    for path, package_path in WEBWORK2_FILES.items():
+        url = JSDELIVR_NPM_CDN + package_path
+        if download_to_archive(url, dest, archive_path=path) is None:
+            raise RuntimeError("Could not download {}".format(url))
+    shutil.copy(KOLIBRI_WEBWORK_SCRIPT_SOURCE, os.path.join(dest, "pretext_kolibri_webwork.js"))
+
+    # the problems, and the files they need
+    templates = os.path.join(dest, "templates")
+    request = {
+        "problems": [{"path": path, "seed": seed} for path, seed in sorted(problems.items())],
+        "templates": [{"prefix": WEBWORK_GENERATED_DIR, "location": generated_dir}] + list(WEBWORK_TEMPLATES),
+    }
+    request_file = os.path.join(tempfile.mkdtemp(), "request.json")
+    with open(request_file, "w") as f:
+        json.dump(request, f)
+    subprocess.run(["node", WEBWORK_BUNDLE_SCRIPT, engine_dir, request_file, templates], check=True)
+    with open(os.path.join(templates, "webwork-problems.json")) as f:
+        results = json.load(f)
+    os.remove(os.path.join(templates, "webwork-problems.json"))
+    for path, result in results.items():
+        webwork_problems[path] = result["ok"]
+    # the engine loads the problems from the templates directory, by the directories they're in
+    directories = {path.split("/")[0] for path in results} | {"macros"}
+    with open(os.path.join(dest, "pg-wasm-config.json"), "w") as f:
+        json.dump({"mounts": {d + "/": "templates/{}/".format(d) for d in sorted(directories)}}, f)
+    working = sum(webwork_problems.values())
+    LOGGER.info("{} of {} WeBWorK problems work offline".format(working, len(webwork_problems)))
+    for path, result in sorted(results.items()):
+        if not result["ok"]:
+            LOGGER.warning("WeBWorK problem {} will only be shown as printed: {}".format(path, result.get("error")))
+
+
+def activate_webwork(page, dep_file_reference):
+    """
+    Make a parsed page's WeBWorK exercises work with the engine in the dependency zip, the ones whose problems the
+    engine shows (see build_webwork), and hide the buttons that activate the others, which need a WeBWorK server,
+    leaving their static versions, as PreTeXt prints them
+    """
+    exercises = webwork_exercises(page)
+    if not exercises:
+        return
+    pretext_script = page.find("script", src=lambda src: src and src.endswith("pretext-webwork.js"))
+    working = False
+    for exercise in exercises:
+        path = webwork_problem_path(exercise)
+        if WEBWORK and pretext_script and webwork_problems.get(path):
+            working = True
+            exercise["data-domain"] = dep_file_reference + WEBWORK_DIR.rstrip("/")
+            exercise["data-kolibri-webwork"] = ""
+            if exercise["data-origin"] == "generated":
+                exercise["data-origin"] = "webwork2"
+                exercise["data-sourcefilepath"] = path
+        else:
+            for button in exercise.find_all("button", class_="webwork-button"):
+                button["style"] = "display:none"
+    # iframe-resizer, which pretext-webwork.js uses, from the server's webwork2_files
+    for script in page.find_all("script", src=True):
+        if is_webwork2_file(script["src"]):
+            if working:
+                script["src"] = dep_file_reference + WEBWORK_DIR + script["src"][script["src"].index("webwork2_files/"):]
+            else:
+                script.decompose()
+    if working:
+        engine = page.new_tag("script", attrs={"src": dep_file_reference + WEBWORK_DIR + "pg-client.js"})
+        hook = page.new_tag("script", attrs={"src": dep_file_reference + WEBWORK_DIR + "pretext_kolibri_webwork.js"})
+        pretext_script.insert_after(engine)
+        engine.insert_after(hook)
+
+
 def has_graded_exercises(page):
     """Whether a parsed page has exercises the script reports answers to, as in findGradedComponents in the script"""
+    if page.find(attrs={"data-kolibri-webwork": True}):
+        return True
     for node in page.find_all(attrs={"data-component": True}):
         if node.find_parent(attrs={"data-optional": True}) or node.has_attr("data-optional"):
             continue

@@ -17,6 +17,9 @@
  *
  * PreTeXt's SCORM builds do much the same with js/ptx_scorm_events.js, made for LMSs that show a whole book as one
  * SCORM package, this is made for a Kolibri resource for each page.
+ *
+ * WeBWorK exercises, which chef_pretext.py makes work offline with pretext_kolibri_webwork.js, are marked with
+ * data-kolibri-webwork, and that script tells this one their scores with a SCORE_EVENT.
  */
 (function () {
   "use strict";
@@ -65,6 +68,8 @@
   var CODE_KEY = "kolibri-pretext:code:";
   // how long to keep trying to put programs back in activecodes, which Runestone makes after the page loads
   var RESTORE_CODE_FOR_MS = 30000;
+  // the event pretext_kolibri_webwork.js sends with the score of an answer to a WeBWorK exercise
+  var SCORE_EVENT = "kolibri-pretext:score";
   // SCORM 1.2 limits cmi.suspend_data to 4096 characters
   var SUSPEND_DATA_LIMIT = 4096;
 
@@ -138,6 +143,12 @@
       }
       if (graded && node.id && !node.closest("[data-optional]") && ids.indexOf(node.id) === -1) {
         ids.push(node.id);
+      }
+    }
+    var webwork = document.querySelectorAll("[data-kolibri-webwork]");
+    for (var j = 0; j < webwork.length; j++) {
+      if (webwork[j].id && !webwork[j].closest("[data-optional]") && ids.indexOf(webwork[j].id) === -1) {
+        ids.push(webwork[j].id);
       }
     }
     return ids;
@@ -410,6 +421,13 @@
     });
   }
 
+  function listenToWebwork() {
+    document.addEventListener(SCORE_EVENT, function (event) {
+      var detail = event.detail || {};
+      onBookEvent(null, { event: "webwork", div_id: detail.id, percent: detail.score, answer: detail.answer });
+    });
+  }
+
   function start() {
     hookRunestone();
     hookSplice();
@@ -434,6 +452,7 @@
   // page has loaded
   hookRunestone();
   hookSplice();
+  listenToWebwork();
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", start);
   } else {
