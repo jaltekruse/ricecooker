@@ -80,8 +80,13 @@ NOISE_SELECTORS = [
 ]
 # Elements whose text is code, where TeX delimiters aren't math
 NO_MATH_ELEMENTS = {"code", "pre", "kbd", "samp", "script", "style", "textarea"}
-# TeX delimiters in text: \( \), \[ \], $$ $$
-TEX_IN_TEXT = re.compile(r"\\\((.+?)\\\)|\\\[(.+?)\\\]|\$\$(.+?)\$\$", re.DOTALL)
+# TeX in text: \( \) inline, and \[ \], $$ $$ and environments like \begin{equation*} \end{equation*} displayed,
+# which MathJax typesets in a browser
+TEX_IN_TEXT = re.compile(
+    r"\\\((?P<inline>.+?)\\\)|\\\[(?P<display>.+?)\\\]|\$\$(?P<dollars>.+?)\$\$"
+    r"|(?P<environment>\\begin\{(?P<name>[A-Za-z]+\*?)\}.+?\\end\{(?P=name)\})",
+    re.DOTALL,
+)
 TEX_ANNOTATIONS = ("application/x-tex", "tex", "latex", "application/x-latex")
 MATHJAX2_FRAME = re.compile(r"^MathJax-Element-\d+-Frame$")
 # Formulas that only define macros, like PreTeXt's \lt, used by the formulas after them
@@ -225,8 +230,12 @@ def _split_tex_in_text(text, formulas):
     last = 0
     for match in TEX_IN_TEXT.finditer(str(text)):
         pieces.append(NavigableString(str(text)[last : match.start()]))
-        inline, display, dollars = match.groups()
-        tex = next(group for group in (inline, display, dollars) if group is not None)
+        inline = match.group("inline")
+        tex = next(
+            match.group(name)
+            for name in ("inline", "display", "dollars", "environment")
+            if match.group(name) is not None
+        )
         formulas.append((tex.strip(), inline is None))
         kind = "I" if inline is not None else "D"
         pieces.append(

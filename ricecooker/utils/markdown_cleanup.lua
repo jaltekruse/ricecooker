@@ -88,3 +88,31 @@ function Figure(el)
   el.attr = plain()
   return el
 end
+
+-- pandoc writes a tight list's items without blank lines, which a fenced div in one needs to be read back, so a list
+-- with a block like that in it is made loose
+local function loosen(list)
+  for _, item in ipairs(list.content) do
+    for _, block in ipairs(item) do
+      if block.t == "Div" then
+        for _, item_again in ipairs(list.content) do
+          for i, b in ipairs(item_again) do
+            if b.t == "Plain" then
+              item_again[i] = pandoc.Para(b.content)
+            end
+          end
+        end
+        return list
+      end
+    end
+  end
+  return list
+end
+
+function BulletList(el)
+  return loosen(el)
+end
+
+function OrderedList(el)
+  return loosen(el)
+end

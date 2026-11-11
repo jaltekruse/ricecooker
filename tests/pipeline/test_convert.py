@@ -1546,6 +1546,23 @@ class TestHTMLToMarkdown:
     def test_math_keeps_its_tex(self, tmp_path, html, expected):
         assert expected in self._markdown(html, tmp_path)
 
+    def test_tex_environments_in_text_are_displayed(self, tmp_path):
+        markdown = self._markdown(
+            "<p>So \\begin{equation*} x = 1 \\end{equation*} holds</p>", tmp_path
+        )
+        assert "So $$\\begin{equation*} x = 1 \\end{equation*}$$ holds" in markdown
+
+    def test_blocks_in_lists_survive_markdown(self, tmp_path):
+        markdown = self._markdown(
+            "<main><ul><li>Item<div class='example'><p>Ex</p></div></li><li>Next</li></ul></main>",
+            tmp_path,
+        )
+        html = markdown_kpub.run_pandoc(
+            ["--from=markdown", "--to=html5"], input_text=markdown
+        )
+        assert '<div class="example">' in html
+        assert ":::" not in html
+
     def test_tex_in_code_is_not_math(self, tmp_path):
         assert "`\\(x\\)`" in self._markdown("<p><code>\\(x\\)</code></p>", tmp_path)
 
