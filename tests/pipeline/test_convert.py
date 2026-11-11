@@ -1566,6 +1566,30 @@ class TestHTMLToMarkdown:
         assert "<img" in html
         assert ":::" not in html
 
+    def test_code_keeps_its_language(self, tmp_path):
+        markdown = self._markdown(
+            "<div class='language-c highlighter-rouge'><div class='highlight'><pre class='highlight'>"
+            "<code><span class='kt'>int</span> x;</code></pre></div></div><pre class='x'><code>plain</code></pre>",
+            tmp_path,
+        )
+        assert "``` c\nint x;\n```" in markdown
+        # without a language, pandoc indents code
+        assert "\n    plain\n" in markdown
+
+    def test_details_stay_collapsed(self, tmp_path):
+        markdown = self._markdown(
+            "<main><details><summary>Hints</summary><ul><li>Loop</li></ul></details>"
+            "<details class='hint'><summary>Hint</summary><p>Try</p></details></main>",
+            tmp_path,
+        )
+        assert "::: details\nHints\n\n-   Loop\n:::" in markdown
+        assert "::: {.hint .details}" in markdown
+        kpub = tmp_path / "kpub"
+        markdown_kpub.markdown_to_kpub(markdown, str(kpub))
+        index = (kpub / "index.html").read_text(encoding="utf-8")
+        assert "<details>\n<summary>Hints</summary>" in index
+        assert '<details class="hint">\n<summary>Hint</summary>' in index
+
     def test_tex_in_code_is_not_math(self, tmp_path):
         assert "`\\(x\\)`" in self._markdown("<p><code>\\(x\\)</code></p>", tmp_path)
 
@@ -1594,7 +1618,7 @@ class TestHTMLToMarkdown:
         )
         assert "::: example\nEx\n:::" in markdown
         assert "::: aside\nAside\n:::" in markdown
-        assert "::: hint\nHint\n\nTry\n:::" in markdown
+        assert "::: {.hint .details}\nHint\n\nTry\n:::" in markdown
 
     def test_links_point_at_the_web(self, tmp_path):
         markdown = self._markdown(

@@ -16,7 +16,7 @@ local KINDS = {
   "definition", "example", "exercise", "problem", "question", "activity", "exploration", "investigation",
   "project", "solution", "answer", "hint", "proof", "remark", "note", "warning", "caution", "tip", "important",
   "insight", "aside", "summary", "objectives", "outcomes", "goal", "assemblage", "algorithm", "callout",
-  "blockquote", "epigraph", "poem", "abstract",
+  "blockquote", "epigraph", "poem", "abstract", "details",
 }
 
 local function kind_of(classes)
@@ -38,7 +38,12 @@ end
 function Div(el)
   local kind = kind_of(el.classes)
   if kind then
-    return pandoc.Div(el.content, pandoc.Attr("", { kind }, {}))
+    local classes = { kind }
+    -- a block that is shown collapsed, like a hint, stays collapsed
+    if kind ~= "details" and el.classes:includes("details") then
+      table.insert(classes, "details")
+    end
+    return pandoc.Div(el.content, pandoc.Attr("", classes, {}))
   end
   return el.content
 end
@@ -68,7 +73,7 @@ function Code(el)
 end
 
 function CodeBlock(el)
-  local language = el.classes[1]
+  local language = nil
   for _, class in ipairs(el.classes) do
     local name = class:match("^language%-(.+)$") or class:match("^lang%-(.+)$")
     if name then
