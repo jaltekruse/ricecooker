@@ -292,6 +292,15 @@ class HTMLZipFile(DownloadFile):
     default_preset = format_presets.HTML5_ZIP
 
 
+class KPUBFile(DownloadFile):
+    """A KPUB, Kolibri's HTML5 article, see ricecooker.utils.markdown_kpub"""
+
+    default_ext = file_formats.HTML5_ARTICLE
+    allowed_formats = {file_formats.HTML5_ARTICLE}
+    is_primary = True
+    default_preset = format_presets.KPUB_ZIP
+
+
 class H5PFile(DownloadFile):
     default_ext = file_formats.H5P
     allowed_formats = {file_formats.H5P}

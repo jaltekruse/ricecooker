@@ -18,6 +18,7 @@ PRESETS_FROM_EXTENSIONS = {
     file_formats.BLOOMPUB: format_presets.BLOOMPUB,
     file_formats.BLOOMD: format_presets.BLOOMPUB,
     file_formats.HTML5: format_presets.HTML5_ZIP,
+    file_formats.HTML5_ARTICLE: format_presets.KPUB_ZIP,
 }
 
 KIND_FROM_PRESET = {p.id: p.kind for p in format_presets.PRESETLIST}
@@ -68,6 +69,10 @@ class HTML5MetadataExtractor(MetadataExtractor):
     EXTENSIONS = {file_formats.HTML5}
 
 
+class KPUBMetadataExtractor(MetadataExtractor):
+    EXTENSIONS = {file_formats.HTML5_ARTICLE}
+
+
 class H5PMetadataExtractor(MetadataExtractor):
     EXTENSIONS = {file_formats.H5P}
 
@@ -91,6 +96,7 @@ class ExtractMetadataStageHandler(StageHandler):
         PDFMetadataExtractor,
         H5PMetadataExtractor,
         HTML5MetadataExtractor,
+        KPUBMetadataExtractor,
         BloomPubMetadataExtractor,
         VideoMetadataExtractor,
     ]

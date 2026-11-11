@@ -305,7 +305,7 @@ class HTML5ConversionHandler(ArchiveProcessingBaseHandler):
                 body_children = [
                     c for c in body.iter() if isinstance(c.tag, str) and c.tag != "body"
                 ]
-                if not body.text.strip() and not body_children:
+                if not (body.text and body.text.strip()) and not body_children:
                     raise InvalidFileException(
                         f"File {path} is not a valid HTML5 file, index.html is empty."
                     )
@@ -313,6 +313,24 @@ class HTML5ConversionHandler(ArchiveProcessingBaseHandler):
                 raise InvalidFileException(
                     f"File {path} is not a valid HTML5 file, index.html is not well-formed."
                 )
+
+
+class KPUBConversionHandler(HTML5ConversionHandler):
+    """A KPUB, Kolibri's HTML5 article: an HTML5 zip of static HTML, without scripts or stylesheets"""
+
+    EXTENSIONS = {file_formats.HTML5_ARTICLE}
+    FILE_TYPE = "KPUB"
+
+    def validate_archive(self, path: str):
+        super().validate_archive(path)
+        with self.open_and_verify_archive(path) as zf:
+            names = zf.namelist()
+            index_html = self.read_file_from_archive(zf, "index.html")
+        if any(n.lower().endswith((".js", ".css")) for n in names):
+            raise InvalidFileException(f"File {path} is not a valid KPUB file, it has JavaScript or CSS files.")
+        dom = html5lib.parse(index_html, namespaceHTMLElements=False)
+        if next(dom.iter("script"), None) is not None:
+            raise InvalidFileException(f"File {path} is not a valid KPUB file, index.html has <script> tags.")
 
 
 class H5PConversionHandler(ArchiveProcessingBaseHandler):
@@ -580,6 +598,7 @@ class ConversionStageHandler(StageHandler):
         EPUBConversionHandler,
         H5PConversionHandler,
         HTML5ConversionHandler,
+        KPUBConversionHandler,
         VideoCompressionHandler,
         AudioCompressionHandler,
     ]

@@ -120,3 +120,48 @@ def test_archive_no_compression_when_disabled(video_file, audio_file):
 
     finally:
         os.unlink(temp_archive.name)
+
+
+def _make_kpub(tmp_path, files):
+    path = tmp_path / "article.kpub"
+    with zipfile.ZipFile(path, "w") as zf:
+        for name, content in files.items():
+            zf.writestr(name, content)
+    return str(path)
+
+
+def test_kpub_file_is_processed(tmp_path):
+    from le_utils.constants import format_presets
+
+    from ricecooker.classes.files import KPUBFile
+
+    path = _make_kpub(tmp_path, {"index.html": "<html><body><p>Text</p></body></html>", "index.md": "Text\n"})
+    kpub = KPUBFile(path)
+    assert kpub.process_file() is not None
+    assert kpub.get_preset() == format_presets.KPUB_ZIP
+
+
+def test_kpub_with_scripts_is_rejected(tmp_path):
+    from ricecooker.classes.files import KPUBFile
+
+    path = _make_kpub(tmp_path, {"index.html": "<html><body><p>Text</p><script>x()</script></body></html>"})
+    kpub = KPUBFile(path)
+    assert kpub.process_file() is None
+    assert "script" in str(kpub.error)
+
+
+def test_markdown_kpub_keeps_markdown_and_makes_mathml(tmp_path):
+    from ricecooker.utils import markdown_kpub
+
+    if not markdown_kpub.mathjax_available():
+        import pytest
+
+        pytest.skip("needs node and mathjax-full")
+    markdown = markdown_kpub.html_to_markdown(
+        "<html><body><main><h1>Speed</h1><p>So \\(v = \\cancel{d}/t\\)</p></main></body></html>", str(tmp_path / "md")
+    )
+    assert markdown == "# Speed\n\nSo $v = \\cancel{d}/t$\n"
+    markdown_kpub.markdown_to_kpub(markdown, str(tmp_path / "kpub"), markdown_dir=str(tmp_path / "md"))
+    index = (tmp_path / "kpub" / "index.html").read_text(encoding="utf-8")
+    assert "<menclose" in index
+    assert (tmp_path / "kpub" / "index.md").read_text(encoding="utf-8") == markdown

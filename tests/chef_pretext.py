@@ -22,8 +22,8 @@ from bs4 import BeautifulSoup
 
 from ricecooker.chefs import SushiChef
 from ricecooker.classes.licenses import get_license
-from ricecooker.classes.files import HTMLZipFile, VideoFile, WebVideoFile, YouTubeVideoFile
-from ricecooker.classes.nodes import ChannelNode, VideoNode
+from ricecooker.classes.files import HTMLZipFile, KPUBFile, VideoFile, WebVideoFile, YouTubeVideoFile
+from ricecooker.classes.nodes import ChannelNode, DocumentNode, VideoNode
 from ricecooker.classes.nodes import HTML5AppNode
 from ricecooker.classes.nodes import TopicNode
 from ricecooker.config import LOGGER
@@ -31,6 +31,7 @@ from ricecooker.utils.caching import CacheControlAdapter
 from ricecooker.utils.caching import CacheForeverHeuristic
 from ricecooker.utils.caching import FileCache
 from ricecooker.utils.downloader import archive_page
+from ricecooker.utils.markdown_kpub import html_to_kpub
 from ricecooker.utils.html import download_file
 from ricecooker.utils import downloader, web
 
@@ -96,6 +97,18 @@ TOC_PAGE = "frontmatter.html"
 SUBCHAPTER_FILTER = "1."
 CHAPTER_FILTER = None
 VIDEO_DIR = "/home/jason/scraping_sites/aYoutubeVidsForKolibri"
+
+# PAGE SETTINGS
+# What each page of the book becomes: "html5", an HTML5 app of the page as it is on the web, with its interactive
+# exercises, "kpub", a KPUB, a Kolibri article, made from markdown of the page's text, which it keeps, as index.md, so
+# it can be edited (see ricecooker.utils.markdown_kpub), with its math as MathML, but without its interactive
+# exercises, or "both", the HTML5 app, then the KPUB.
+PAGE_FORMAT = "html5"
+# The part of a PreTeXt page that is its content, and the parts of it that aren't, for its KPUB
+PRETEXT_CONTENT = "#ptx-content"
+PRETEXT_NOT_CONTENT = (
+    ".print-preview-header, .autopermalink, .problem-buttons, .print-links, .workspace, .ptx-content-footer"
+)
 
 
 sess = requests.Session()
@@ -266,7 +279,8 @@ def add_subpages_from_pretext_toc(channel, list_url):
         if sub_chapters:
             chapters.append((chapter_href, chapter_summary_url, chapter_title, sub_chapters))
 
-    if dep_zip is None:
+    # only the pages' HTML5 apps need the dependency zip
+    if dep_zip is None and PAGE_FORMAT != "kpub":
         all_page_urls = []
         for _, chapter_summary_url, _, sub_chapters in chapters:
             all_page_urls.append(chapter_summary_url)
@@ -277,19 +291,65 @@ def add_subpages_from_pretext_toc(channel, list_url):
         chapter_topic = TopicNode(source_id=chapter_source_id, title=chapter_title)
 
         # add a page for the chapter overview, to give us a place to link to for that entry in the table of contents
-        chapter_html5app = download_book_page(chapter_summary_url, thumbnail=None, title=chapter_title, sub_chap_number=sub_chapters[0][2])
-        chapter_topic.add_child(chapter_html5app[0])
+        for node in book_page_nodes(chapter_summary_url, chapter_title, sub_chapters[0][2]):
+            chapter_topic.add_child(node)
 
         for sub_chap_url, sub_chap_title, sub_chap_number in sub_chapters:
-            html5app = download_book_page(sub_chap_url, thumbnail=None, title=sub_chap_title, sub_chap_number=sub_chap_number)
-            chapter_topic.add_child(html5app[0])
-
-            for extra in html5app[1]:
-                chapter_topic.add_child(extra)
+            for node in book_page_nodes(sub_chap_url, sub_chap_title, sub_chap_number):
+                chapter_topic.add_child(node)
 
         channel.add_child(chapter_topic)
 
     return None
+
+
+def book_page_nodes(url, title, sub_chap_number):
+    """The nodes for a page of the book, as PAGE_FORMAT says, followed by the page's videos"""
+    nodes = []
+    extras = []
+    if PAGE_FORMAT in ("html5", "both"):
+        html5app, extras = download_book_page(url, thumbnail=None, title=title, sub_chap_number=sub_chap_number)
+        nodes.append(html5app)
+    if PAGE_FORMAT in ("kpub", "both"):
+        nodes.append(book_page_kpub(url, title))
+    return nodes + list(extras)
+
+
+def fetch_content(url):
+    """The content at url, or None when it can't be downloaded"""
+    response = make_request(url)
+    return response.content if response.status_code == 200 else None
+
+
+def book_page_kpub(url, title):
+    """
+    A KPUB of a page of the book, made from markdown of its text, which the KPUB keeps, with its math, and images, but
+    not its interactive exercises, except for the static versions of WeBWorK exercises PreTeXt prints
+    """
+    response = make_request(url)
+    response.raise_for_status()
+    kpub_dir = tempfile.mkdtemp()
+    html_to_kpub(
+        response.content.decode("utf-8"),
+        kpub_dir,
+        base_url=url,
+        content_selector=PRETEXT_CONTENT,
+        exclude_selector=PRETEXT_NOT_CONTENT,
+        fetch=lambda image_url: fetch_content(image_url),
+        title=title,
+        language=CHANNEL_LANGUAGE,
+    )
+    zip_path = create_predictable_zip(kpub_dir)
+    kpub_path = os.path.splitext(zip_path)[0] + ".kpub"
+    shutil.move(zip_path, kpub_path)
+    return DocumentNode(
+        source_id=url.split("/")[-1] + ("#kpub" if PAGE_FORMAT == "both" else ""),
+        title=title,
+        license=license,
+        copyright_holder=copyright,
+        license_description=license_description,
+        files=[KPUBFile(kpub_path)],
+    )
 
 
 def toc_entry(item):

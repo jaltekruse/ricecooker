@@ -1072,7 +1072,7 @@ class AudioNode(ContentNode):
 class DocumentNode(ContentNode):
     """Model representing documents in channel
 
-    Documents must be in PDF or ePub format
+    Documents must be in PDF, ePub, Bloom or KPUB format
 
     Attributes:
         source_id (str): content's original id
@@ -1094,6 +1094,7 @@ class DocumentNode(ContentNode):
         format_presets.DOCUMENT,
         format_presets.EPUB,
         format_presets.BLOOMPUB,
+        format_presets.KPUB_ZIP,
     )
 
     def generate_thumbnail(self):
