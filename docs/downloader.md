@@ -38,8 +38,46 @@ Pass these in the node's `context`:
 - `browser_cookies_file`: cookies for pages behind a login.
 - `http_headers`: a `{name: value}` dict of extra request headers.
 
+- `markdown_kpub`: make a KPUB of the page, rather than an HTML5 zip, see below.
+- `content_selector`: with `markdown_kpub`, the page's content, as a CSS selector. By default
+  it's the page's `<main>`, or its only `<article>`, or its `<body>`.
+
 For pages behind a login, see
 [Authenticating login-walled sites](https://github.com/learningequality/ricecooker/tree/main/examples/pagearchive#authenticating-login-walled-sites).
+
+
+### Pages as editable KPUBs
+
+With `context={"markdown_kpub": True}`, the page is made into a KPUB, a Kolibri article,
+by way of markdown, which the KPUB keeps, as `index.md`, with the images it uses in `media/`,
+so the article can be edited, and made into a KPUB again, with
+`ricecooker.utils.markdown_kpub.markdown_to_kpub`.
+
+The markdown keeps the meaning of the page: its headings, lists, tables, figures, emphasis
+and links, the blocks that mean something, like theorems, definitions and examples (as
+pandoc's fenced divs, `::: theorem`), and its math, as the TeX it was written in, recovered
+from MathJax (2, 3 or 4), KaTeX, MathML with a TeX annotation, or TeX in the page's text.
+What only lays out or styles the page is left out, as are its scripts, forms and navigation.
+
+The KPUB's math is MathML, converted from the TeX by MathJax (see [installation](installation.md)),
+which Kolibri shows. The TeX stays with each formula, as its MathML annotation.
+
+```python
+page_node = ContentNode(
+    source_id="velocity",
+    title="Velocity",
+    license=get_license("CC BY-SA", copyright_holder="..."),
+    language="en",
+    uri="https://example.org/calculus/velocity.html",
+    context={"markdown_kpub": True, "content_selector": "main"},
+)
+```
+
+The same functions work on HTML you have already: `html_to_markdown(html, folder)` writes
+the images to the folder and returns the markdown, and `markdown_to_kpub(markdown, kpub_folder,
+markdown_dir=folder)` writes the KPUB's files, to zip with `create_predictable_zip` and give
+a `ContentNode` as its `uri`. Documents (`.docx`, `.odt`, `.rtf`, `.md`) given as a `uri` are
+made into KPUBs the same way, and keep their markdown too.
 
 
 ### Migrating from `ArchiveDownloader`

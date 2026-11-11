@@ -19,6 +19,16 @@ computer and three additional file conversion tools: `ffmpeg` for video compress
 the `poppler` library for manipulating PDFs, and `pandoc` for converting article-style
 documents (`.docx`, `.odt`, `.rtf`, `.md`, `.markdown`) to KPUB.
 
+Converting math to MathML, when documents and pages are made into KPUBs, also uses
+[MathJax](https://www.mathjax.org), which understands far more of LaTeX than pandoc.
+It needs [node](https://nodejs.org) and the `mathjax-full` package, version 3:
+
+    npm install -g mathjax-full@3
+
+or set `RICECOOKER_MATHJAX_PATH` to a `mathjax-full` directory. Without it, pandoc
+converts the math, and leaves out what it doesn't understand, like `\cancel`,
+`\color` and `\ce`, as TeX.
+
 Jump to the specific instructions for your operating system, and be sure to try
 the *Checklist* commands to know the installation was successful.
 

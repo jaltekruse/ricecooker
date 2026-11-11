@@ -50,6 +50,10 @@ from ricecooker.utils.imscp import is_qti_resource
 from ricecooker.utils.imscp import lom_content_fields
 from ricecooker.utils.imscp import node_content_fields
 from ricecooker.utils.imscp import parse_imscp_manifest
+from ricecooker.utils.markdown_kpub import convert_math_to_mathml
+from ricecooker.utils.markdown_kpub import MARKDOWN_SOURCE
+from ricecooker.utils.markdown_kpub import MARKDOWN_WRITER_ARGS
+from ricecooker.utils.markdown_kpub import MarkdownKPUBError
 from ricecooker.utils.paths import extract_path_ext
 from ricecooker.utils.pipeline.context import ContentNodeMetadata
 from ricecooker.utils.pipeline.context import ContextMetadata
@@ -1105,11 +1109,37 @@ class SubtitleConversionHandler(ExtensionMatchingHandler):
 
 
 class DocumentConversionHandler(ExtensionMatchingHandler):
-    """Convert article-style documents to KPUB via pandoc, then sanitize."""
+    """Convert article-style documents to KPUB via markdown, then sanitize.
+
+    Documents other than markdown are first converted to markdown by pandoc, which is kept in the KPUB, as index.md,
+    with the media it uses, so the KPUB can be edited and made again (see ricecooker.utils.markdown_kpub). The
+    markdown is then converted to HTML by pandoc, with its math converted to MathML by MathJax, which understands far
+    more of LaTeX than pandoc, or by pandoc when MathJax isn't installed.
+    """
 
     EXTENSIONS = {"docx", "odt", "rtf", "md", "markdown"}
-    HANDLED_EXCEPTIONS = [PandocConversionError]
+    MARKDOWN_EXTENSIONS = {"md", "markdown"}
+    HANDLED_EXCEPTIONS = [PandocConversionError, MarkdownKPUBError]
     TIMEOUT = 300
+
+    def _run_pandoc(self, args, cwd, src):
+        try:
+            subprocess.run(
+                ["pandoc"] + args,
+                cwd=cwd,
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                # pandoc's rendered errors are UTF-8.
+                encoding="utf-8",
+                errors="replace",
+                check=True,
+                timeout=self.TIMEOUT,
+            )
+        except subprocess.CalledProcessError as e:
+            detail = _pandoc_error_detail(e.stderr, src, e.returncode)
+            raise PandocConversionError(
+                f"pandoc failed to convert the document: {detail}"
+            )
 
     def handle_file(self, path):
         if shutil.which("pandoc") is None:
@@ -1124,31 +1154,43 @@ class DocumentConversionHandler(ExtensionMatchingHandler):
             src = os.path.join("..", name)
             kpub_dir = os.path.join(work_dir, "kpub")
             os.mkdir(kpub_dir)
-            try:
-                subprocess.run(
-                    [
-                        "pandoc",
-                        src,
-                        "--standalone",
-                        "--mathml",
-                        "--extract-media=media",
-                        "-o",
-                        "index.html",
-                    ],
-                    cwd=kpub_dir,
-                    stdin=subprocess.DEVNULL,
-                    capture_output=True,
-                    # pandoc's rendered errors are UTF-8.
-                    encoding="utf-8",
-                    errors="replace",
-                    check=True,
-                    timeout=self.TIMEOUT,
+            if (
+                os.path.splitext(name)[1].lstrip(".").lower()
+                in self.MARKDOWN_EXTENSIONS
+            ):
+                markdown = src
+                shutil.copyfile(path, os.path.join(kpub_dir, MARKDOWN_SOURCE))
+            else:
+                markdown = MARKDOWN_SOURCE
+                self._run_pandoc(
+                    [src]
+                    + MARKDOWN_WRITER_ARGS
+                    + ["--extract-media=media", "-o", MARKDOWN_SOURCE],
+                    kpub_dir,
+                    src,
                 )
-            except subprocess.CalledProcessError as e:
-                detail = _pandoc_error_detail(e.stderr, src, e.returncode)
-                raise PandocConversionError(
-                    f"pandoc failed to convert the document: {detail}"
-                )
+            self._run_pandoc(
+                [
+                    markdown,
+                    "--from=markdown",
+                    "--standalone",
+                    "--mathjax",
+                    "--extract-media=media",
+                    # <title> defaults to the source's stem, not index.md's
+                    "--metadata=pagetitle={}".format(os.path.splitext(name)[0]),
+                    "-o",
+                    "index.html",
+                ],
+                kpub_dir,
+                src,
+            )
+            index = os.path.join(kpub_dir, "index.html")
+            with open(index, encoding="utf-8") as f:
+                html = f.read()
+            converted = convert_math_to_mathml(html)
+            if converted != html:
+                with open(index, "w", encoding="utf-8") as f:
+                    f.write(converted)
             # pandoc --extract-media localizes embedded media only; unlike an
             # uploaded KPUB, remote <img> refs are not downloaded (out of scope).
             sanitize_kpub_directory(kpub_dir)

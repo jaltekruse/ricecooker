@@ -53,6 +53,7 @@ from ricecooker.exceptions import InvalidNodeException
 from ricecooker.managers.tree import ChannelManager
 from ricecooker.utils import archive_assets
 from ricecooker.utils import caching
+from ricecooker.utils import markdown_kpub
 from ricecooker.utils import videos
 from ricecooker.utils.archive_dependencies import SharedAssetExtractor
 from ricecooker.utils.audio import compress_audio
@@ -1433,6 +1434,215 @@ class TestDocumentConversion:
         assert "\n" not in message
         # pandoc < 3.9 omits the path here
         assert read_file_hash(src) not in message
+
+
+requires_mathjax = pytest.mark.skipif(
+    not markdown_kpub.mathjax_available(), reason="needs node and mathjax-full"
+)
+
+
+class TestDocumentConversionMarkdown:
+    """Documents are converted to KPUB through markdown, which the KPUB keeps."""
+
+    @contextmanager
+    def _convert(self, ext, markdown):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            src = _make_source(tmpdir, ext, markdown)
+            result = FilePipeline(default_context={}).execute(src, skip_cache=True)
+            with zipfile.ZipFile(result[0].path) as zf:
+                yield result, zf
+
+    def test_markdown_source_is_kept(self):
+        markdown = "# Title\n\nInline $a^2+b^2$\n"
+        with self._convert("md", markdown) as (_result, zf):
+            assert zf.read(markdown_kpub.MARKDOWN_SOURCE).decode("utf-8") == markdown
+
+    @pytest.mark.parametrize("ext", ["docx", "odt"])
+    def test_documents_keep_their_markdown(self, ext):
+        with self._convert(ext, "# Title\n\n**Hello** world") as (_result, zf):
+            markdown = zf.read(markdown_kpub.MARKDOWN_SOURCE).decode("utf-8")
+            assert markdown.strip() == "# Title\n\n**Hello** world"
+
+    def test_document_math_is_tex_in_the_markdown(self):
+        with self._convert("docx", "# Title\n\nHello $x^2$ world") as (_result, zf):
+            markdown = zf.read(markdown_kpub.MARKDOWN_SOURCE).decode("utf-8")
+            assert "Hello $x^{2}$ world" in markdown
+            assert "<math" in zf.read("index.html").decode("utf-8")
+
+    @requires_mathjax
+    def test_mathjax_converts_latex_pandoc_cannot(self):
+        with self._convert("md", "# T\n\nStruck $\\cancel{x}$ and $\\ce{H2O}$") as (
+            _r,
+            zf,
+        ):
+            index = zf.read("index.html").decode("utf-8")
+            assert "<menclose" in index
+            assert (
+                '<annotation encoding="application/x-tex">\\cancel{x}</annotation>'
+                in index
+            )
+            assert '<code class="tex">' not in index
+
+    def test_without_mathjax_pandoc_makes_the_mathml(self, monkeypatch):
+        def missing(formulas):
+            raise markdown_kpub.MathJaxMissingError("no MathJax")
+
+        monkeypatch.setattr(markdown_kpub, "tex_to_mathml", missing)
+        with self._convert("md", "# T\n\nInline $a^2+b^2$") as (_r, zf):
+            index = zf.read("index.html").decode("utf-8")
+            assert "<math" in index
+            assert "math inline" not in index
+
+
+class TestHTMLToMarkdown:
+    """Web pages to markdown that keeps their meaning and their math's TeX."""
+
+    def _markdown(self, body, tmp_path, **kwargs):
+        return markdown_kpub.html_to_markdown(
+            "<html><body>{}</body></html>".format(body), str(tmp_path), **kwargs
+        )
+
+    @pytest.mark.parametrize(
+        "html,expected",
+        [
+            (
+                "<p>A <script type='math/tex'>\\sqrt{x}</script> B</p>",
+                "A $\\sqrt{x}$ B",
+            ),
+            (
+                "<p><span class='MathJax_Preview'>x</span><span class='MathJax' id='MathJax-Element-1-Frame'>x</span>"
+                "<script type='math/tex; mode=display'>\\sum_k k</script></p>",
+                "$$\\sum_k k$$",
+            ),
+            (
+                "<p>A <mjx-container data-latex='\\cancel{y}'><mjx-math>y</mjx-math></mjx-container></p>",
+                "A $\\cancel{y}$",
+            ),
+            (
+                "<p>A <mjx-container><mjx-math aria-hidden='true'>e</mjx-math><mjx-assistive-mml>"
+                "<math><msup><mi>e</mi><mi>x</mi></msup></math></mjx-assistive-mml></mjx-container></p>",
+                "A $e^{x}$",
+            ),
+            (
+                "<p>A <span class='katex'><span class='katex-mathml'><math><semantics><mi>y</mi>"
+                "<annotation encoding='application/x-tex'>\\boxed{y}</annotation></semantics></math></span>"
+                "<span class='katex-html' aria-hidden='true'>y</span></span></p>",
+                "A $\\boxed{y}$",
+            ),
+            (
+                "<p>Text \\( \\frac{a}{b} \\) and \\[x = 1\\]</p>",
+                "Text $\\frac{a}{b}$ and $$x = 1$$",
+            ),
+        ],
+        ids=[
+            "mathjax2",
+            "mathjax2-display",
+            "mathjax4-data-latex",
+            "mathjax3-mathml",
+            "katex",
+            "tex-in-text",
+        ],
+    )
+    def test_math_keeps_its_tex(self, tmp_path, html, expected):
+        assert expected in self._markdown(html, tmp_path)
+
+    def test_tex_in_code_is_not_math(self, tmp_path):
+        assert "`\\(x\\)`" in self._markdown("<p><code>\\(x\\)</code></p>", tmp_path)
+
+    def test_meaningful_blocks_are_kept_and_wrappers_dropped(self, tmp_path):
+        markdown = self._markdown(
+            "<div class='layout'><div class='theorem-like' id='t1'><p><b>Theorem.</b> True.</p></div>"
+            "<p><span class='x'>plain</span></p></div>",
+            tmp_path,
+        )
+        assert "::: theorem\n**Theorem.** True.\n:::" in markdown
+        assert "layout" not in markdown
+        assert "{" not in markdown
+
+    def test_macro_definitions_go_first(self, tmp_path):
+        markdown = self._markdown(
+            "<div hidden>\\(\\newcommand{\\lt}{<}\\)</div><main><p>\\(a \\lt b\\)</p></main>",
+            tmp_path,
+        )
+        assert markdown == "$$\\newcommand{\\lt}{<}$$\n\n$a \\lt b$\n"
+
+    def test_articles_and_asides_are_blocks(self, tmp_path):
+        markdown = self._markdown(
+            "<main><article class='example-like'><p>Ex</p></article><aside><p>Aside</p></aside>"
+            "<details class='hint'><summary>Hint</summary><p>Try</p></details></main>",
+            tmp_path,
+        )
+        assert "::: example\nEx\n:::" in markdown
+        assert "::: aside\nAside\n:::" in markdown
+        assert "::: hint\nHint\n\nTry\n:::" in markdown
+
+    def test_excluded_parts_are_left_out(self, tmp_path):
+        markdown = self._markdown(
+            "<p class='controls'>Print</p><p>Content</p>",
+            tmp_path,
+            exclude_selector=".controls",
+        )
+        assert markdown.strip() == "Content"
+
+    def test_content_is_the_main_element(self, tmp_path):
+        markdown = self._markdown(
+            "<nav>Menu</nav><main><p>Content</p></main><footer>Footer</footer>",
+            tmp_path,
+        )
+        assert markdown.strip() == "Content"
+
+    def test_embedded_images_go_in_media(self, tmp_path):
+        data_uri = "data:image/png;base64," + base64.b64encode(_PNG_1x1).decode("ascii")
+        markdown = self._markdown(
+            '<p><img src="{}" alt="dot"></p>'.format(data_uri), tmp_path
+        )
+        [name] = os.listdir(tmp_path / "media")
+        assert "![dot](media/{})".format(name) in markdown
+
+    def test_web_images_are_downloaded(self, tmp_path):
+        fetched = []
+
+        def fetch(url):
+            fetched.append(url)
+            return _PNG_1x1
+
+        markdown = self._markdown(
+            '<p><img src="pic.png" alt="pic"></p>',
+            tmp_path,
+            base_url="https://example.org/a/",
+            fetch=fetch,
+        )
+        assert fetched == ["https://example.org/a/pic.png"]
+        [name] = os.listdir(tmp_path / "media")
+        assert "![pic](media/{})".format(name) in markdown
+
+
+class TestMarkdownToKPUB:
+    @requires_mathjax
+    def test_kpub_has_mathml_images_and_markdown(self, tmp_path):
+        source = tmp_path / "source"
+        (source / "media").mkdir(parents=True)
+        (source / "media" / "dot.png").write_bytes(_PNG_1x1)
+        markdown = "# Velocity\n\nSpeed $\\color{red}{v}$\n\n![dot](media/dot.png)\n"
+        kpub = tmp_path / "kpub"
+        markdown_kpub.markdown_to_kpub(markdown, str(kpub), markdown_dir=str(source))
+        index = (kpub / "index.html").read_text(encoding="utf-8")
+        assert "<title>Velocity</title>" in index
+        assert 'mathcolor="red"' in index
+        assert (
+            '<annotation encoding="application/x-tex">\\color{red}{v}</annotation>'
+            in index
+        )
+        assert (kpub / "media" / "dot.png").read_bytes() == _PNG_1x1
+        assert (kpub / markdown_kpub.MARKDOWN_SOURCE).read_text(
+            encoding="utf-8"
+        ) == markdown
+
+    @requires_mathjax
+    def test_tex_mathjax_cannot_convert_is_shown(self, tmp_path):
+        markdown_kpub.markdown_to_kpub("Broken $\\frac{a}{$ math", str(tmp_path))
+        index = (tmp_path / "index.html").read_text(encoding="utf-8")
+        assert '<code class="tex">\\frac{a}{</code>' in index
 
 
 @contextmanager

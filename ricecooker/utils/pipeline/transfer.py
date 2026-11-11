@@ -28,6 +28,8 @@ from ricecooker.utils.encodings import ext_from_data_uri_mimetype
 from ricecooker.utils.encodings import exts_from_mimetype
 from ricecooker.utils.encodings import get_base64_data_uri
 from ricecooker.utils.encodings import mimetype_from_content_type
+from ricecooker.utils.markdown_kpub import html_to_kpub
+from ricecooker.utils.markdown_kpub import MarkdownKPUBError
 from ricecooker.utils.paths import extract_path_ext
 from ricecooker.utils.paths import resolve_path_ext
 from ricecooker.utils.pipeline.exceptions import InvalidFileException
@@ -46,6 +48,7 @@ from .context import FileMetadata
 from .convert import _seal_directory_to_file
 from .convert import ArchiveProcessingBaseHandler
 from .convert import ConversionStageHandler
+from .convert import sanitize_kpub_directory
 from .convert import SubtitleConversionHandler
 from .convert import VideoCompressionHandler
 from .file_handler import FileHandler
@@ -807,6 +810,13 @@ class Base64FileHandler(FileHandler):
             fh.write(decoded)
 
 
+def _fetch_bytes(url):
+    """The content at ``url``, with the session ricecooker downloads with"""
+    response = config.DOWNLOAD_SESSION.get(url, timeout=60)
+    response.raise_for_status()
+    return response.content
+
+
 class SingleFileRenderContextMetadata(ContextMetadata):
     crawl_max_depth: int = 1
     crawl_inner_links_only: bool = True
@@ -818,6 +828,11 @@ class SingleFileRenderContextMetadata(ContextMetadata):
     browser_cookies_file: Optional[str] = None
     http_headers: Optional[Dict[str, str]] = None
     rejected_default_ext: Optional[str] = None
+    # Make a KPUB of the page, from markdown, rather than an HTML5 zip, see
+    # ricecooker.utils.markdown_kpub. content_selector picks the page's content
+    # by CSS selector, by default its <main>, or its only <article>, or <body>.
+    markdown_kpub: bool = False
+    content_selector: Optional[str] = None
 
 
 class SingleFileRenderHandler(WebResourceHandler):
@@ -851,12 +866,40 @@ class SingleFileRenderHandler(WebResourceHandler):
         key = generate_key("SINGLEFILE", self.normalize_path(path), settings=kwargs)
         return _rejected_cache_key(key, rejected_default_ext)
 
-    def handle_file(self, path, rejected_default_ext=None, **context):
+    def handle_file(
+        self,
+        path,
+        rejected_default_ext=None,
+        markdown_kpub=False,
+        content_selector=None,
+        **context,
+    ):
         _check_default_ext(rejected_default_ext, path)
         with tempfile.TemporaryDirectory() as temp_dir:
-            render_page(path, temp_dir, **context)
+            index = render_page(path, temp_dir, **context)
+            if markdown_kpub:
+                self._make_markdown_kpub(path, index, temp_dir, content_selector)
+                return
             self._neutralize_navigation(temp_dir)
             _seal_directory_to_file(self, temp_dir, file_formats.HTML5)
+
+    def _make_markdown_kpub(self, url, index, temp_dir, content_selector):
+        """Seal a KPUB of the rendered page, made from markdown, which it keeps as index.md, so it can be edited."""
+        with open(index, encoding="utf-8") as fh:
+            html = fh.read()
+        kpub_dir = os.path.join(temp_dir, "kpub")
+        try:
+            html_to_kpub(
+                html,
+                kpub_dir,
+                base_url=url,
+                content_selector=content_selector,
+                fetch=_fetch_bytes,
+            )
+        except MarkdownKPUBError as e:
+            raise SingleFileRenderError(f"Could not make a KPUB of {url}: {e}")
+        sanitize_kpub_directory(kpub_dir)
+        _seal_directory_to_file(self, kpub_dir, file_formats.HTML5_ARTICLE)
 
     def _neutralize_navigation(self, directory):
         """Apply neutralize_external_navigation to every rendered HTML page."""

@@ -1784,6 +1784,37 @@ def test_singlefile_render_handler_neutralizes_external_navigation():
     assert 'href="page2.html"' in index
 
 
+def test_singlefile_render_handler_makes_markdown_kpub():
+    # With markdown_kpub, the page becomes a KPUB made from markdown, which it keeps,
+    # with the math's TeX from MathJax's rendering and the page's own content only.
+    body = (
+        "<nav>Site menu</nav><main><h1>Velocity</h1>"
+        "<p>Speed <script type='math/tex'>v = \\frac{d}{t}</script>.</p>"
+        "<script>track()</script></main>"
+    )
+
+    def render_page(url, output_dir, **kwargs):
+        assert "markdown_kpub" not in kwargs
+        with open(os.path.join(output_dir, "index.html"), "w") as fh:
+            fh.write("<html><body>{}</body></html>".format(body))
+        return os.path.join(output_dir, "index.html")
+
+    with patch(
+        "ricecooker.utils.pipeline.transfer.render_page", side_effect=render_page
+    ):
+        result = SingleFileRenderHandler().execute(
+            "https://markdown.example/", context={"markdown_kpub": True}
+        )
+    assert result[0].filename.endswith(".kpub")
+    with zipfile.ZipFile(result[0].path) as zf:
+        markdown = zf.read("index.md").decode()
+        index = zf.read("index.html").decode()
+    assert markdown == "# Velocity\n\nSpeed $v = \\frac{d}{t}$.\n"
+    assert "<math" in index
+    assert "<script" not in index
+    assert "Site menu" not in index
+
+
 def test_singlefile_render_handler_forwards_crawl_context():
     # Crawl depth/scope reach the handler only through CONTEXT_CLASS; without it
     # every field silently defaults and the depth/scope config AC is a no-op.
