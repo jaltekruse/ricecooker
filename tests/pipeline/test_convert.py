@@ -1576,6 +1576,17 @@ class TestHTMLToMarkdown:
         assert "::: aside\nAside\n:::" in markdown
         assert "::: hint\nHint\n\nTry\n:::" in markdown
 
+    def test_links_point_at_the_web(self, tmp_path):
+        markdown = self._markdown(
+            '<p><a href="next.html">Next</a>, <a href="#eq1">(1)</a>, <a href="https://x.org/">X</a></p>',
+            tmp_path,
+            base_url="https://example.org/book/page.html",
+        )
+        assert (
+            markdown.strip()
+            == "[Next](https://example.org/book/next.html), (1), [X](https://x.org/)"
+        )
+
     def test_excluded_parts_are_left_out(self, tmp_path):
         markdown = self._markdown(
             "<p class='controls'>Print</p><p>Content</p>",

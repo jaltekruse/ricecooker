@@ -294,6 +294,19 @@ def _inline_svgs(soup, root):
         svg.replace_with(img)
 
 
+def _resolve_links(root, base_url):
+    """
+    A KPUB has only the page, so links to the rest of the site point at it on the web, and links to places in the
+    page, whose ids are left out, are left out too, keeping their text
+    """
+    for link in root.find_all("a"):
+        href = (link.get("href") or "").strip()
+        if not href or href.startswith("#") or href.lower().startswith("javascript:"):
+            link.unwrap()
+        elif base_url:
+            link["href"] = urljoin(base_url, href)
+
+
 def _download_images(root, base_url, fetch):
     """Download the page's images that are on the web, for pandoc to put in the media folder with the others"""
     for img in root.find_all("img", src=True):
@@ -421,6 +434,7 @@ def html_to_markdown(
     root = _page_content(soup, content_selector, exclude_selector)
     _blocks_as_divs(root)
     _inline_svgs(soup, root)
+    _resolve_links(root, base_url)
     _download_images(root, base_url, fetch or _default_fetch)
 
     content = (
