@@ -89,12 +89,12 @@ function Figure(el)
   return el
 end
 
--- pandoc writes a tight list's items without blank lines, which a fenced div in one needs to be read back, so a list
--- with a block like that in it is made loose
+-- pandoc writes a tight list's items without blank lines, which a fenced div in one (a Div, or a Figure, which it
+-- writes as one) needs to be read back, so a list with a block like that in it is made loose
 local function loosen(list)
   for _, item in ipairs(list.content) do
     for _, block in ipairs(item) do
-      if block.t == "Div" then
+      if block.t == "Div" or block.t == "Figure" then
         for _, item_again in ipairs(list.content) do
           for i, b in ipairs(item_again) do
             if b.t == "Plain" then

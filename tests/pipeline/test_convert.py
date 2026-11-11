@@ -1553,14 +1553,17 @@ class TestHTMLToMarkdown:
         assert "So $$\\begin{equation*} x = 1 \\end{equation*}$$ holds" in markdown
 
     def test_blocks_in_lists_survive_markdown(self, tmp_path):
+        data_uri = "data:image/png;base64," + base64.b64encode(_PNG_1x1).decode("ascii")
         markdown = self._markdown(
-            "<main><ul><li>Item<div class='example'><p>Ex</p></div></li><li>Next</li></ul></main>",
+            "<main><ul><li>Item<div class='example'><p>Ex</p></div></li>"
+            f"<li>Next<figure><img src='{data_uri}' alt='dot'><figcaption>Dot</figcaption></figure></li></ul></main>",
             tmp_path,
         )
         html = markdown_kpub.run_pandoc(
             ["--from=markdown", "--to=html5"], input_text=markdown
         )
         assert '<div class="example">' in html
+        assert "<img" in html
         assert ":::" not in html
 
     def test_tex_in_code_is_not_math(self, tmp_path):
