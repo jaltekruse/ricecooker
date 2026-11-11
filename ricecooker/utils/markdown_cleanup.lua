@@ -9,7 +9,8 @@ content. Headings, links, images and code lose their ids, classes and attributes
 an image's alt text and title, which pandoc keeps outside of its attributes.
 ]]
 
--- Kinds of blocks worth keeping, matched against the start of a class, e.g. "theorem" matches "theorem-like"
+-- Kinds of blocks worth keeping, matched against a class that is the kind, or the kind followed by "-like", as in
+-- PreTeXt's classes, e.g. "theorem" matches "theorem" and "theorem-like", but not "theorem-wrapper"
 local KINDS = {
   "theorem", "lemma", "corollary", "proposition", "conjecture", "axiom", "principle", "claim", "fact",
   "definition", "example", "exercise", "problem", "question", "activity", "exploration", "investigation",
@@ -22,7 +23,7 @@ local function kind_of(classes)
   for _, class in ipairs(classes) do
     local lower = class:lower()
     for _, kind in ipairs(KINDS) do
-      if lower == kind or lower:sub(1, #kind + 1) == kind .. "-" then
+      if lower == kind or lower == kind .. "-like" then
         return kind
       end
     end
