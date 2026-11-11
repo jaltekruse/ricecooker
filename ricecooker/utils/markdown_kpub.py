@@ -280,12 +280,54 @@ def _blocks_as_divs(root):
     """
     for element in root.find_all(["article", "aside", "details"]):
         classes = list(element.get("class") or [])
-        if element.name == "aside":
-            classes.append("aside")
+        if element.name in ("aside", "details"):
+            # details, shown collapsed, are made <details> again in a KPUB, see _details
+            classes.append(element.name)
         element.name = "div"
         element.attrs = {"class": classes} if classes else {}
     for summary in root.find_all("summary"):
         summary.name = "p"
+
+
+# Classes that say what language code is in: language-c and lang-c, as Rouge, Prism and highlight.js have them
+CODE_LANGUAGE = re.compile(r"^(?:language|lang)-(.+)$")
+
+
+def _code_languages(root):
+    """
+    Give each code block the language its code is in, from the classes that say so, which are often on an element
+    around it, as in Rouge's <div class="language-c"><div class="highlight"><pre class="highlight">, and leave out
+    the other classes, which only style it
+    """
+    for pre in root.find_all("pre"):
+        language = None
+        for element in [pre.find("code"), pre] + list(pre.parents)[:3]:
+            for name in (element.get("class") or []) if element else []:
+                match = CODE_LANGUAGE.match(name)
+                if match and not language:
+                    language = match.group(1)
+        for element in [pre] + pre.find_all("code"):
+            element.attrs.pop("class", None)
+        if language and language not in ("plaintext", "text", "none"):
+            pre["class"] = ["language-" + language]
+
+
+def _details(body):
+    """pandoc's HTML for the details html_to_markdown kept as fenced divs, made <details> again, with their summary"""
+    soup = BeautifulSoup(body, "html.parser")
+    found = False
+    for div in soup.find_all("div", class_="details"):
+        found = True
+        div.name = "details"
+        div["class"] = [name for name in div["class"] if name != "details"]
+        if not div["class"]:
+            del div["class"]
+        first = next(
+            (child for child in div.children if getattr(child, "name", None)), None
+        )
+        if first is not None and first.name == "p":
+            first.name = "summary"
+    return str(soup) if found else body
 
 
 def _inline_svgs(soup, root):
@@ -442,6 +484,7 @@ def html_to_markdown(
     _extract_math(soup, formulas)
     root = _page_content(soup, content_selector, exclude_selector)
     _blocks_as_divs(root)
+    _code_languages(root)
     _inline_svgs(soup, root)
     _resolve_links(root, base_url)
     _download_images(root, base_url, fetch or _default_fetch)
@@ -647,7 +690,7 @@ def markdown_to_kpub(markdown, kpub_dir, markdown_dir=None, title=None, language
         ["--from=markdown", "--to=html5", "--mathjax", "--wrap=none"],
         input_text=markdown,
     )
-    body = convert_math_to_mathml(body)
+    body = convert_math_to_mathml(_details(body))
     if markdown_dir:
         _copy_local_images(body, markdown_dir, kpub_dir)
     if title is None:

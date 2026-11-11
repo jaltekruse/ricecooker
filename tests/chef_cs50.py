@@ -8,6 +8,9 @@ week holding the week's page, lecture video, notes, slides, source code, section
 Videos are imported as their own video nodes, only the English 720p SDR MP4s. Pages are HTML5 apps sharing one
 dependency zip, like chef_pretext.py, and like it this runs twice, so that the second run can turn links between pages
 and to videos into navigation to the Kolibri nodes, using the node ids from the first run.
+
+Pages can also be KPUBs, Kolibri articles, made from markdown of the pages, which they keep, as index.md, so they can be
+edited (see PAGE_FORMAT and ricecooker.utils.markdown_kpub).
 """
 import json
 import os
@@ -19,6 +22,7 @@ from urllib.parse import urldefrag
 from urllib.parse import urljoin
 from urllib.parse import urlparse
 
+from bs4 import BeautifulSoup
 from le_utils.constants import format_presets
 from le_utils.constants.labels import levels
 from le_utils.constants.labels import subjects
@@ -27,6 +31,7 @@ from ricecooker.chefs import SushiChef
 from ricecooker.classes import licenses
 from ricecooker.classes.files import DocumentFile
 from ricecooker.classes.files import HTMLZipFile
+from ricecooker.classes.files import KPUBFile
 from ricecooker.classes.files import SubtitleFile
 from ricecooker.classes.files import VideoFile
 from ricecooker.classes.nodes import ChannelNode
@@ -38,6 +43,7 @@ from ricecooker.config import LOGGER
 from ricecooker.utils import downloader
 from ricecooker.utils import web
 from ricecooker.utils.downloader import archive_page
+from ricecooker.utils.markdown_kpub import html_to_kpub
 from ricecooker.utils.zip import create_predictable_zip
 
 # reuse the scraping helpers written for PreTeXt books, e.g. building the shared dependency zip and handling MathJax
@@ -48,7 +54,9 @@ from chef_pretext import download_mathjax  # noqa: E402
 from chef_pretext import download_mathjax_loader_extensions  # noqa: E402
 from chef_pretext import download_page_resources  # noqa: E402
 from chef_pretext import download_to_archive  # noqa: E402
+from chef_pretext import fetch_content  # noqa: E402
 from chef_pretext import get_parsed_html_from_url  # noqa: E402
+from chef_pretext import make_request  # noqa: E402
 from chef_pretext import point_mathjax_at_dependency_zip  # noqa: E402
 
 
@@ -95,6 +103,11 @@ EMOJI_RE = re.compile(
 WATCH_BUTTON_TEXT = "\u25b6 Watch the video"
 # how the versions of the problems with the same name are told apart
 PROBLEM_VARIANTS = {"less": "Less Comfortable", "more": "More Comfortable"}
+
+# What each page becomes: "html5", an HTML5 app of the page as it is on the web, "kpub", a KPUB, a Kolibri article,
+# made from markdown of the page, which it keeps, as index.md, so it can be edited, with its text, code and images, and
+# links to its videos and terminal recordings on the web, or "both", the HTML5 app, then the KPUB
+PAGE_FORMAT = "html5"
 # files linked from the pages small enough to include in the dependency zip, everything else stays a link to the web
 DEPENDENCY_FILE_EXTENSIONS = {".zip", ".pdf", ".txt", ".srt", ".c", ".h", ".py", ".sql", ".csv", ".html", ".js", ".css"}
 
@@ -143,10 +156,12 @@ class CS50xChef(SushiChef):
         topics.append(problems_tree("Practice Problems", PRACTICE_PROBLEMS_PAGE))
         topics.append(pages_tree("About the Course", COURSE_INFO_PAGES))
 
-        if dep_zip is None:
+        # only the pages' HTML5 apps need the dependency zip
+        if dep_zip is None and PAGE_FORMAT != "kpub":
             build_dependency_zip()
 
-        channel.add_child(build_page(home["url"], home["title"]))
+        for node in page_nodes(home["url"], home["title"]):
+            channel.add_child(node)
         for topic in topics:
             channel.add_child(build_topic(topic))
         return channel
@@ -252,7 +267,8 @@ def build_topic(topic):
     topic_node = TopicNode(source_id=topic["children"][0]["url"] + "#topic", title=topic["title"])
     for item in topic["children"]:
         if item["kind"] == "page":
-            topic_node.add_child(build_page(item["url"], item["title"]))
+            for node in page_nodes(item["url"], item["title"]):
+                topic_node.add_child(node)
         elif item["kind"] == "video":
             files = [VideoFile(path=item["url"])]
             if item["subtitles"]:
@@ -531,6 +547,67 @@ def build_page(url, title):
         source_id=url,
         title=title,
         files=[HTMLZipFile(create_predictable_zip(page_dir)), dep_zip_file],
+        license=LICENSE,
+        copyright_holder=COPYRIGHT_HOLDER,
+    )
+
+
+def page_nodes(url, title):
+    """The nodes for a page, as PAGE_FORMAT says"""
+    nodes = []
+    if PAGE_FORMAT in ("html5", "both"):
+        nodes.append(build_page(url, title))
+    if PAGE_FORMAT in ("kpub", "both"):
+        nodes.append(build_page_kpub(url, title))
+    return nodes
+
+
+def link_paragraph(soup, url, text):
+    """A paragraph linking to url, which shows the url, as Kolibri shows KPUBs' links to other sites as text"""
+    paragraph = soup.new_tag("p")
+    paragraph.append(text + ": ")
+    link = soup.new_tag("a", href=url)
+    link.string = url
+    paragraph.append(link)
+    return paragraph
+
+
+def embeds_as_links(soup):
+    """
+    A KPUB can't play the page's embedded videos or its terminal recordings, which asciinema.org's script plays, so
+    link to them on the web instead, as Kolibri can't link from a KPUB to another of the channel's nodes, like the
+    video's
+    """
+    for embed in soup.find_all("script", src=ASCIINEMA_SCRIPT_RE):
+        recording = ASCIINEMA_SCRIPT_RE.search(embed["src"]).group(1)
+        embed.replace_with(link_paragraph(
+            soup, "https://asciinema.org/a/{}".format(recording),
+            "A terminal recording, on asciinema.org (with an internet connection)"))
+    for frame in soup.find_all("iframe", src=True):
+        src = frame["src"].replace("&amp;", "&")
+        youtube = re.search(r"(?:youtube\.com/embed/|youtu\.be/|video\.cs50\.io/)([\w-]{11})", src)
+        if youtube:
+            frame.replace_with(link_paragraph(
+                soup, "https://www.youtube.com/watch?v=" + youtube.group(1),
+                "A video, on YouTube (with an internet connection)"))
+
+
+def build_page_kpub(url, title):
+    """A KPUB of a page, made from markdown of it, which the KPUB keeps"""
+    response = make_request(url)
+    response.raise_for_status()
+    soup = BeautifulSoup(response.content, "html.parser")
+    embeds_as_links(soup)
+    kpub_dir = tempfile.mkdtemp()
+    html_to_kpub(str(soup), kpub_dir, base_url=url, content_selector="main", fetch=fetch_content, title=title,
+                 language=CHANNEL_LANGUAGE)
+    zip_path = create_predictable_zip(kpub_dir)
+    kpub_path = os.path.splitext(zip_path)[0] + ".kpub"
+    shutil.move(zip_path, kpub_path)
+    return DocumentNode(
+        source_id=url + ("#kpub" if PAGE_FORMAT == "both" else ""),
+        title=title,
+        files=[KPUBFile(kpub_path)],
         license=LICENSE,
         copyright_holder=COPYRIGHT_HOLDER,
     )
